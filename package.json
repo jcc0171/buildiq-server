@@ -1,0 +1,8 @@
+{
+  "name": "buildiq-server",
+  "version": "1.0.0",
+  "description": "BuildIQ secure API proxy",
+  "engines": {
+    "node": "18.x"
+  }
+}
