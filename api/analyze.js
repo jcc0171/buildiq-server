@@ -1,11 +1,11 @@
 export default async function handler(req, res) {
-
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
+  res.setHeader('Access-Control-Max-Age', '86400');
 
   if (req.method === 'OPTIONS') {
-    res.status(200).end();
+    res.status(204).end();
     return;
   }
 
@@ -15,28 +15,23 @@ export default async function handler(req, res) {
   }
 
   try {
-    let body = req.body;
-    if (typeof body === 'string') {
-      body = JSON.parse(body);
-    }
-
-    const prompt = body?.prompt;
+    const prompt = req.body?.prompt;
     if (!prompt) {
-      res.status(400).json({ error: 'No prompt provided' });
+      res.status(400).json({ error: 'No prompt' });
       return;
     }
 
-    const ANTHROPIC_API_KEY = process.env.ANTHROPIC_API_KEY;
-    if (!ANTHROPIC_API_KEY) {
-      res.status(500).json({ error: 'API key not configured' });
+    const key = process.env.ANTHROPIC_API_KEY;
+    if (!key) {
+      res.status(500).json({ error: 'No API key' });
       return;
     }
 
-    const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'x-api-key': ANTHROPIC_API_KEY,
+        'x-api-key': key,
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
@@ -46,10 +41,10 @@ export default async function handler(req, res) {
       })
     });
 
-    const data = await anthropicRes.json();
+    const data = await r.json();
     res.status(200).json(data);
 
-  } catch (err) {
-    res.status(500).json({ error: err.message });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 }
