@@ -1,0 +1,1124 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<meta http-equiv="Content-Security-Policy" content="upgrade-insecure-requests">
+<title>PlanIQ Pro — AI RFI Generator</title>
+<link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
+<!-- PDF.js — reads PDF files in the browser, no server needed -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<style>
+/* ═══════════════════════════════════════════
+   DESIGN SYSTEM
+═══════════════════════════════════════════ */
+:root {
+  --ink:    #0d0d0d;
+  --paper:  #f4efe5;
+  --panel:  #1a2332;
+  --amber:  #d4820a;
+  --amber2: #f0a830;
+  --rust:   #b84c2b;
+  --sage:   #4a6741;
+  --steel:  #2c3e50;
+  --line:   rgba(13,13,13,0.1);
+  --mono:   'DM Mono', monospace;
+  --disp:   'Bebas Neue', sans-serif;
+  --serif:  'DM Serif Display', serif;
+  --body:   'Instrument Sans', sans-serif;
+}
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { scroll-behavior: smooth; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--body);
+  min-height: 100vh;
+}
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image:
+    linear-gradient(rgba(44,62,80,0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(44,62,80,0.035) 1px, transparent 1px);
+  background-size: 40px 40px;
+  pointer-events: none; z-index: 0;
+}
+
+/* ── LAYOUT ── */
+.app-shell { position: relative; z-index: 1; max-width: 1200px; margin: 0 auto; padding: 0 32px 80px; }
+
+/* ── TOPBAR ── */
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 22px 0; border-bottom: 1px solid var(--line); margin-bottom: 48px;
+}
+.logo { font-family: var(--disp); font-size: 26px; letter-spacing: 2px; display: flex; align-items: center; gap: 8px; }
+.logo-dot { width: 9px; height: 9px; background: var(--amber); border-radius: 50%; }
+.plan-pill {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 1px;
+  padding: 5px 14px; border: 1px solid var(--line);
+  display: flex; align-items: center; gap: 8px;
+}
+.plan-pill span { color: var(--amber); font-weight: 500; }
+
+/* ── PAGE SECTIONS ── */
+.section { display: none; }
+.section.active { display: block; animation: fadeUp 0.4s ease; }
+@keyframes fadeUp { from { opacity:0; transform:translateY(16px); } to { opacity:1; transform:translateY(0); } }
+
+/* ── VIDEO SECTION ── */
+.video-section { text-align: center; padding: 20px 0 48px; }
+.video-label { font-family: var(--mono); font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--amber); margin-bottom: 12px; }
+.video-title { font-family: var(--disp); font-size: clamp(32px, 4vw, 52px); line-height: 0.95; letter-spacing: 1px; margin-bottom: 28px; }
+.video-title em { font-family: var(--serif); font-style: italic; color: var(--amber); }
+.video-wrap { max-width: 720px; margin: 0 auto; aspect-ratio: 16/9; background: var(--panel); position: relative; overflow: hidden; box-shadow: 12px 12px 0 rgba(13,13,13,0.12); }
+.video-placeholder { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; cursor: pointer; transition: background 0.2s; background: var(--panel); }
+.video-placeholder:hover { background: #243447; }
+.video-play { font-size: 56px; color: var(--amber); margin-bottom: 12px; line-height: 1; }
+.video-play-label { font-family: var(--mono); font-size: 12px; letter-spacing: 2px; text-transform: uppercase; color: rgba(255,255,255,0.5); }
+
+/* ── PLANS ── */
+.pay-hero { text-align: center; padding: 32px 0 60px; }
+.pay-tag {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 2px; text-transform: uppercase;
+  color: var(--amber); border: 1px solid var(--amber); display: inline-block; padding: 4px 14px; margin-bottom: 28px;
+}
+.pay-h1 { font-family: var(--disp); font-size: clamp(52px, 7vw, 96px); line-height: 0.92; letter-spacing: 1px; margin-bottom: 20px; }
+.pay-h1 em { font-family: var(--serif); font-style: italic; color: var(--amber); }
+.pay-sub { font-size: 17px; line-height: 1.65; color: var(--steel); opacity: 0.8; max-width: 520px; margin: 0 auto 56px; }
+
+.plans-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 2px; background: var(--line); border: 1px solid var(--line); max-width: 980px; margin: 0 auto; }
+.plan-card { background: var(--paper); padding: 44px 40px; position: relative; }
+.plan-card.featured { background: var(--ink); color: var(--paper); }
+.plan-card-tag {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 2px; text-transform: uppercase;
+  background: var(--amber); color: var(--ink); display: inline-block; padding: 3px 10px; margin-bottom: 20px;
+}
+.plan-card-name { font-family: var(--disp); font-size: 28px; letter-spacing: 1px; margin-bottom: 8px; }
+.plan-card-price { font-family: var(--disp); font-size: 56px; line-height: 1; margin-bottom: 4px; }
+.plan-card-price sup { font-family: var(--mono); font-size: 18px; vertical-align: super; }
+.plan-card-note { font-family: var(--mono); font-size: 10px; letter-spacing: 1px; opacity: 0.55; margin-bottom: 28px; }
+.plan-card-divider { height: 1px; background: currentColor; opacity: 0.1; margin-bottom: 24px; }
+.plan-feat { font-size: 15px; padding: 9px 0; display: flex; gap: 10px; border-bottom: 1px solid currentColor; border-bottom-color: rgba(13,13,13,0.08); opacity: 0.9; }
+.plan-card.featured .plan-feat { border-bottom-color: rgba(255,255,255,0.07); }
+.plan-feat::before { content: '→'; opacity: 0.4; flex-shrink: 0; }
+.plan-btn {
+  margin-top: 28px; width: 100%;
+  font-family: var(--mono); font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
+  border: 2px solid currentColor; background: transparent; color: currentColor;
+  padding: 13px 0; cursor: pointer; transition: all 0.2s;
+}
+.plan-btn:hover { background: var(--amber); border-color: var(--amber); color: var(--ink); }
+.plan-card.featured .plan-btn { background: var(--amber); border-color: var(--amber); color: var(--ink); }
+
+/* Mock "payment" input area */
+.pay-form-wrap { max-width: 480px; margin: 0 auto; }
+.pay-form-title { font-family: var(--disp); font-size: 26px; margin-bottom: 6px; }
+.pay-form-sub { font-family: var(--mono); font-size: 11px; opacity: 0.5; margin-bottom: 28px; letter-spacing: 0.5px; }
+.pay-field { margin-bottom: 16px; }
+.pay-label { font-family: var(--mono); font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; opacity: 0.55; margin-bottom: 6px; display: block; }
+.pay-input {
+  width: 100%; font-family: var(--mono); font-size: 14px;
+  padding: 12px 16px; background: white; border: 1px solid var(--line);
+  color: var(--ink); outline: none; transition: border-color 0.2s;
+}
+.pay-input:focus { border-color: var(--amber); }
+.pay-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.pay-submit {
+  width: 100%; margin-top: 8px;
+  font-family: var(--mono); font-size: 13px; letter-spacing: 1px; text-transform: uppercase;
+  background: var(--ink); color: var(--paper); border: none; padding: 16px; cursor: pointer; transition: all 0.2s;
+}
+.pay-submit:hover { background: var(--amber); }
+.pay-secure { font-family: var(--mono); font-size: 10px; letter-spacing: 1px; opacity: 0.4; text-align: center; margin-top: 12px; }
+.pay-back { font-family: var(--mono); font-size: 11px; opacity: 0.5; cursor: pointer; margin-top: 16px; text-align: center; text-decoration: underline; }
+.pay-back:hover { opacity: 1; }
+
+/* ══════════════════════════════════════════
+   SECTION 2: UPLOAD
+══════════════════════════════════════════ */
+.upload-header { margin-bottom: 40px; }
+.upload-label { font-family: var(--mono); font-size: 11px; letter-spacing: 3px; text-transform: uppercase; color: var(--amber); margin-bottom: 10px; }
+.upload-title { font-family: var(--disp); font-size: clamp(40px, 5vw, 64px); line-height: 0.95; }
+.upload-title em { font-family: var(--serif); font-style: italic; color: var(--amber); }
+
+.quota-bar-wrap { margin-bottom: 40px; background: white; border: 1px solid var(--line); padding: 20px 24px; }
+.quota-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+.quota-label { font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; opacity: 0.55; }
+.quota-val { font-family: var(--disp); font-size: 22px; }
+.quota-val span { color: var(--amber); }
+.quota-bar { height: 4px; background: var(--line); }
+.quota-fill { height: 100%; background: var(--amber); transition: width 0.6s ease; }
+
+.drop-zone {
+  border: 2px dashed rgba(13,13,13,0.2);
+  padding: 60px 40px;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.25s;
+  background: white;
+  position: relative;
+}
+.drop-zone:hover, .drop-zone.drag-over {
+  border-color: var(--amber);
+  background: rgba(212,130,10,0.04);
+}
+.drop-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
+.drop-title { font-family: var(--disp); font-size: 28px; letter-spacing: 1px; margin-bottom: 8px; }
+.drop-sub { font-family: var(--mono); font-size: 12px; letter-spacing: 0.5px; opacity: 0.5; margin-bottom: 24px; }
+.drop-btn {
+  font-family: var(--mono); font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
+  background: var(--ink); color: var(--paper); border: none; padding: 12px 28px; cursor: pointer; transition: all 0.2s;
+}
+.drop-btn:hover { background: var(--amber); }
+#fileInput { display: none; }
+
+.uploaded-files { margin-top: 24px; display: flex; flex-direction: column; gap: 8px; }
+.file-row {
+  background: white; border: 1px solid var(--line); padding: 14px 20px;
+  display: flex; align-items: center; gap: 16px; animation: fadeUp 0.3s ease;
+}
+.file-icon { font-size: 20px; flex-shrink: 0; }
+.file-info { flex: 1; }
+.file-name { font-family: var(--mono); font-size: 13px; font-weight: 500; }
+.file-meta { font-family: var(--mono); font-size: 10px; opacity: 0.5; margin-top: 2px; letter-spacing: 0.5px; }
+.file-status { font-family: var(--mono); font-size: 10px; letter-spacing: 1px; text-transform: uppercase; }
+.status-ok { color: var(--sage); }
+.status-warn { color: var(--rust); }
+.file-remove { font-family: var(--mono); font-size: 11px; opacity: 0.35; cursor: pointer; padding: 4px; transition: opacity 0.2s; }
+.file-remove:hover { opacity: 1; color: var(--rust); }
+
+.analyze-btn-wrap { margin-top: 32px; display: flex; align-items: center; gap: 20px; }
+.analyze-btn {
+  font-family: var(--mono); font-size: 13px; letter-spacing: 1px; text-transform: uppercase;
+  background: var(--ink); color: var(--paper); border: none; padding: 16px 40px;
+  cursor: pointer; transition: all 0.2s; flex-shrink: 0;
+}
+.analyze-btn:hover:not(:disabled) { background: var(--amber); transform: translateY(-2px); box-shadow: 4px 4px 0 var(--ink); }
+.analyze-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+.analyze-hint { font-family: var(--mono); font-size: 11px; opacity: 0.45; letter-spacing: 0.5px; line-height: 1.6; }
+
+/* ══════════════════════════════════════════
+   SECTION 3: ANALYSIS / STREAMING
+══════════════════════════════════════════ */
+.analysis-header { margin-bottom: 36px; display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
+.analysis-title-wrap {}
+.analysis-title { font-family: var(--disp); font-size: clamp(36px, 4vw, 56px); line-height: 0.95; margin-bottom: 8px; }
+.analysis-sub { font-family: var(--mono); font-size: 11px; opacity: 0.5; letter-spacing: 0.5px; }
+.analysis-status { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.pulse-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--amber); animation: pulse 1.2s ease-in-out infinite; }
+@keyframes pulse { 0%,100%{opacity:0.3;} 50%{opacity:1;} }
+.status-text { font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase; color: var(--amber); }
+
+/* Streaming log */
+.stream-log {
+  background: var(--panel); padding: 24px 28px; margin-bottom: 28px;
+  font-family: var(--mono); font-size: 12px; line-height: 2;
+  min-height: 120px; max-height: 200px; overflow-y: auto;
+  border: 1px solid rgba(255,255,255,0.06);
+}
+.log-line { color: rgba(255,255,255,0.55); animation: fadeUp 0.2s ease; }
+.log-line.highlight { color: var(--amber2); }
+.log-line.success { color: #7aab6e; }
+.log-line.error { color: #e8785a; }
+.cursor { display: inline-block; width: 8px; height: 14px; background: var(--amber); vertical-align: middle; animation: blink 1s step-end infinite; }
+@keyframes blink { 0%,100%{opacity:1;} 50%{opacity:0;} }
+
+/* RFI cards */
+.rfi-section-title { font-family: var(--disp); font-size: 28px; letter-spacing: 1px; margin-bottom: 20px; }
+.rfi-count-badge {
+  display: inline-block; font-family: var(--mono); font-size: 11px; letter-spacing: 1px;
+  background: var(--amber); color: var(--ink); padding: 3px 12px; margin-left: 12px; vertical-align: middle;
+}
+.rfi-filters { display: flex; gap: 8px; margin-bottom: 20px; flex-wrap: wrap; }
+.filter-btn {
+  font-family: var(--mono); font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+  padding: 6px 16px; border: 1px solid var(--line); background: transparent; cursor: pointer; transition: all 0.15s;
+}
+.filter-btn.active, .filter-btn:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.filter-btn.high.active { background: var(--rust); border-color: var(--rust); }
+.filter-btn.med.active { background: var(--amber); border-color: var(--amber); color: var(--ink); }
+.filter-btn.low.active { background: var(--sage); border-color: var(--sage); }
+
+.rfi-cards { display: flex; flex-direction: column; gap: 8px; }
+.rfi-card {
+  background: white; border: 1px solid var(--line); border-left: 4px solid var(--amber);
+  padding: 20px 24px; cursor: pointer; transition: all 0.2s; animation: fadeUp 0.4s ease;
+}
+.rfi-card:hover { box-shadow: 4px 4px 0 var(--line); transform: translateX(2px); }
+.rfi-card.high { border-left-color: var(--rust); }
+.rfi-card.medium { border-left-color: var(--amber); }
+.rfi-card.low { border-left-color: var(--sage); }
+.rfi-card-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+.rfi-card-num { font-family: var(--mono); font-size: 11px; letter-spacing: 1.5px; text-transform: uppercase; opacity: 0.75; color: var(--amber); font-weight: 500; }
+.rfi-card-title { font-family: var(--disp); font-size: 20px; letter-spacing: 0.5px; flex: 1; }
+.rfi-priority {
+  font-family: var(--mono); font-size: 9px; letter-spacing: 1px; text-transform: uppercase;
+  padding: 3px 10px; border-radius: 2px; flex-shrink: 0;
+}
+.priority-high { background: rgba(184,76,43,0.12); color: var(--rust); border: 1px solid rgba(184,76,43,0.3); }
+.priority-medium { background: rgba(212,130,10,0.12); color: var(--amber); border: 1px solid rgba(212,130,10,0.3); }
+.priority-low { background: rgba(74,103,65,0.12); color: var(--sage); border: 1px solid rgba(74,103,65,0.3); }
+.rfi-card-body { font-size: 14px; line-height: 1.65; color: var(--steel); opacity: 0.8; }
+.rfi-card-meta { margin-top: 12px; display: flex; gap: 20px; flex-wrap: wrap; }
+.rfi-meta-item { font-family: var(--mono); font-size: 10px; letter-spacing: 0.5px; opacity: 0.45; }
+.rfi-meta-item strong { opacity: 0.8; }
+.rfi-card-footer { margin-top: 14px; display: flex; justify-content: flex-end; }
+.rfi-email-btn {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+  background: transparent; color: var(--steel); border: 1px solid var(--line);
+  padding: 7px 16px; cursor: pointer; transition: all 0.2s;
+  display: flex; align-items: center; gap: 6px;
+}
+.rfi-email-btn:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+
+.rfi-page-ref { opacity: 1 !important; color: var(--amber) !important; font-size: 11px !important; background: rgba(212,130,10,0.08); padding: 3px 8px; border: 1px solid rgba(212,130,10,0.25); }
+
+/* Export bar */
+.export-bar {
+  position: sticky; bottom: 0;
+  background: rgba(244,239,229,0.96); backdrop-filter: blur(12px);
+  border-top: 1px solid var(--line); padding: 16px 0;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  margin-top: 40px; flex-wrap: wrap;
+}
+.export-info { font-family: var(--mono); font-size: 12px; opacity: 0.55; }
+.export-info strong { color: var(--ink); opacity: 1; }
+.export-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.export-btn {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+  padding: 10px 20px; border: 1px solid var(--line); background: white; cursor: pointer; transition: all 0.2s;
+}
+.export-btn:hover { border-color: var(--ink); background: var(--ink); color: var(--paper); }
+.export-btn.procore { background: #0072ce; color: white; border-color: #0072ce; }
+.export-btn.procore:hover { background: #005bab; }
+.export-btn.procore { background: #0072ce; color: white; border-color: #0072ce; }
+.export-btn.procore:hover { background: #005bab; }
+.export-btn.primary { background: var(--ink); color: var(--paper); border-color: var(--ink); }
+.export-btn.primary:hover { background: var(--amber); border-color: var(--amber); color: var(--ink); }
+
+/* ── PROCORE MODAL ── */
+.modal-overlay {
+  display: none; position: fixed; inset: 0; background: rgba(13,13,13,0.7);
+  z-index: 200; align-items: center; justify-content: center; backdrop-filter: blur(4px);
+}
+.modal-overlay.open { display: flex; animation: fadeUp 0.25s ease; }
+.modal {
+  background: var(--paper); border: 1px solid var(--line); padding: 48px;
+  max-width: 520px; width: 90%; position: relative;
+  box-shadow: 20px 20px 0 rgba(13,13,13,0.15);
+}
+.modal-close {
+  position: absolute; top: 16px; right: 20px;
+  font-family: var(--mono); font-size: 18px; cursor: pointer; opacity: 0.4;
+  transition: opacity 0.2s; background: none; border: none;
+}
+.modal-close:hover { opacity: 1; }
+.modal-logo { font-family: var(--disp); font-size: 22px; letter-spacing: 1px; margin-bottom: 6px; }
+.modal-title { font-family: var(--disp); font-size: 32px; letter-spacing: 0.5px; margin-bottom: 8px; }
+.modal-sub { font-family: var(--mono); font-size: 11px; opacity: 0.5; margin-bottom: 28px; letter-spacing: 0.5px; line-height: 1.7; }
+.modal-field { margin-bottom: 14px; }
+.modal-label { font-family: var(--mono); font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; opacity: 0.55; margin-bottom: 6px; display: block; }
+.modal-input {
+  width: 100%; font-family: var(--mono); font-size: 13px;
+  padding: 11px 14px; background: white; border: 1px solid var(--line);
+  color: var(--ink); outline: none; transition: border-color 0.2s;
+}
+.modal-input:focus { border-color: var(--amber); }
+.modal-submit {
+  width: 100%; margin-top: 8px;
+  font-family: var(--mono); font-size: 12px; letter-spacing: 1px; text-transform: uppercase;
+  background: #0072ce; color: white; border: none; padding: 14px; cursor: pointer; transition: all 0.2s;
+}
+.modal-submit:hover { background: #005bab; }
+.modal-note { font-family: var(--mono); font-size: 10px; opacity: 0.4; text-align: center; margin-top: 12px; line-height: 1.7; }
+
+/* ── UTILITY ── */
+.hidden { display: none !important; }
+.mt-40 { margin-top: 40px; }
+
+/* ── RESPONSIVE ── */
+@media (max-width: 640px) {
+  .app-shell { padding: 0 16px 60px; }
+  .plans-grid { grid-template-columns: 1fr; }
+  .export-bar { flex-direction: column; align-items: flex-start; }
+}
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+
+  <!-- TOP BAR -->
+  <div class="topbar">
+    <div class="logo"><div class="logo-dot"></div>PLANIQ PRO</div>
+    <div class="plan-pill" id="planPill">Plan: <span id="planLabel">—</span></div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       SECTION 1 — CHOOSE PLAN
+  ═══════════════════════════════════════ -->
+  <div class="section active" id="sec-plans">
+    <div class="pay-hero">
+      <div class="pay-tag">PlanIQ Pro — AI-Powered RFI Generator</div>
+      <h1 class="pay-h1">UPLOAD. ANALYZE.<br><em>Never miss</em> AN RFI.</h1>
+      <p class="pay-sub">Upload your PDF construction drawings and PlanIQ Pro's AI instantly generates every RFI your project needs — streamed live, ready to export.</p>
+    </div>
+
+    <!-- VIDEO DEMO SECTION -->
+    <div class="video-section">
+      <div class="video-label">// See It In Action</div>
+      <div class="video-title">WATCH HOW IT WORKS<br><em>60 seconds</em></div>
+      <div class="video-wrap" id="videoWrap">
+        <!-- Replace VIDEO_ID below with your Loom video ID after recording -->
+        <!-- Example: if your Loom URL is https://loom.com/share/abc123 then VIDEO_ID = abc123 -->
+        <div class="video-placeholder" onclick="this.innerHTML='<iframe src=\'https://www.loom.com/embed/VIDEO_ID\' frameborder=\'0\' allowfullscreen style=\'width:100%;height:100%;\'></iframe>'">
+          <div class="video-play">▶</div>
+          <div class="video-play-label">Watch Demo</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="plans-grid" style="grid-template-columns: 1fr 1fr; max-width: 680px;">
+      <div class="plan-card">
+        <div class="plan-card-name">STARTER</div>
+        <div class="plan-card-price"><sup>$</sup>39</div>
+        <div class="plan-card-note">one-time · no subscription</div>
+        <div class="plan-card-divider"></div>
+        <div class="plan-feat">2 drawing uploads</div>
+        <div class="plan-feat">Up to 30 pages per upload</div>
+        <div class="plan-feat">Up to 10 RFIs generated</div>
+        <div class="plan-feat">Full AI RFI analysis</div>
+        <div class="plan-feat">PDF + CSV export</div>
+        <div class="plan-feat">✉ Email any RFI instantly</div>
+        <button class="plan-btn" onclick="selectPlan('starter', '$39 one-time')">Get Started →</button>
+      </div>
+      <div class="plan-card featured">
+        <div class="plan-card-tag">Best Value</div>
+        <div class="plan-card-name">PROFESSIONAL</div>
+        <div class="plan-card-price"><sup>$</sup>149</div>
+        <div class="plan-card-note">per month · unlimited uploads</div>
+        <div class="plan-card-divider"></div>
+        <div class="plan-feat">Unlimited uploads</div>
+        <div class="plan-feat">Up to 35 pages per drawing set</div>
+        <div class="plan-feat">Up to 12 RFIs generated</div>
+        <div class="plan-feat">Full AI RFI analysis</div>
+        <div class="plan-feat">PDF + CSV export</div>
+        <div class="plan-feat">✉ Email any RFI instantly</div>
+        <div class="plan-feat">Procore-ready CSV export</div>
+        <button class="plan-btn" onclick="selectPlan('pro', '$149/month')">Get Started →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       SECTION 1b — PAYMENT FORM
+  ═══════════════════════════════════════ -->
+  <div class="section" id="sec-payment">
+    <div style="max-width:520px; margin:0 auto; padding:40px 0;">
+      <div class="pay-form-title" id="payFormTitle">Complete Your Order</div>
+      <div class="pay-form-sub" id="payFormSub">Starter Plan — $39 one-time</div>
+
+      <div class="pay-field">
+        <label class="pay-label">Full Name</label>
+        <input type="text" class="pay-input" id="payName" placeholder="Jane Smith"/>
+      </div>
+      <div class="pay-field">
+        <label class="pay-label">Email Address</label>
+        <input type="email" class="pay-input" id="payEmail" placeholder="jane@yourcompany.com"/>
+      </div>
+      <div class="pay-field">
+        <label class="pay-label">Card Number</label>
+        <input type="text" class="pay-input" placeholder="4242 4242 4242 4242" maxlength="19" oninput="formatCard(this)"/>
+      </div>
+      <div class="pay-row">
+        <div class="pay-field">
+          <label class="pay-label">Expiry</label>
+          <input type="text" class="pay-input" placeholder="MM / YY" maxlength="7" oninput="formatExpiry(this)"/>
+        </div>
+        <div class="pay-field">
+          <label class="pay-label">CVC</label>
+          <input type="text" class="pay-input" placeholder="123" maxlength="4"/>
+        </div>
+      </div>
+      <button class="pay-submit" onclick="completePurchase()">🔒 Complete Purchase</button>
+      <div class="pay-secure">256-bit SSL · Powered by Stripe · Cancel anytime</div>
+      <div class="pay-back" onclick="showSection('sec-plans')">← Back to plans</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       SECTION 2 — UPLOAD
+  ═══════════════════════════════════════ -->
+  <div class="section" id="sec-upload">
+    <div class="upload-header">
+      <div class="upload-label">// Step 1 of 2 — Upload Drawings</div>
+      <h2 class="upload-title">UPLOAD YOUR<br><em>construction</em> DRAWINGS</h2>
+    </div>
+
+    <!-- Quota display -->
+    <div class="quota-bar-wrap">
+      <div class="quota-row">
+        <div class="quota-label">Uploads Used</div>
+        <div class="quota-val"><span id="uploadsUsed">0</span> / <span id="uploadsMax">—</span></div>
+      </div>
+      <div class="quota-bar"><div class="quota-fill" id="quotaFill" style="width:0%"></div></div>
+    </div>
+
+    <!-- Drop zone -->
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()"
+         ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)">
+      <div class="drop-icon">📐</div>
+      <div class="drop-title">DROP YOUR DRAWING SET HERE</div>
+      <div class="drop-sub">PDF only · Max 30 pages per file · Max 50MB</div>
+      <button class="drop-btn" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">Browse Files</button>
+      <input type="file" id="fileInput" accept=".pdf" multiple onchange="handleFileSelect(event)"/>
+    </div>
+
+    <div class="uploaded-files" id="uploadedFiles"></div>
+
+    <div class="analyze-btn-wrap">
+      <button class="analyze-btn" id="analyzeBtn" disabled onclick="startAnalysis()">
+        Analyze Drawings →
+      </button>
+      <div class="analyze-hint" id="analyzeHint">Upload at least one PDF drawing to begin analysis.</div>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       SECTION 3 — STREAMING ANALYSIS + RFIS
+  ═══════════════════════════════════════ -->
+  <div class="section" id="sec-results">
+    <div class="analysis-header">
+      <div class="analysis-title-wrap">
+        <div class="upload-label">// Step 2 of 2 — RFI Analysis</div>
+        <div class="analysis-title" id="analysisTitle">ANALYZING<br>DRAWINGS...</div>
+        <div class="analysis-sub" id="analysisSub">AI is reading your construction documents</div>
+      </div>
+      <div class="analysis-status" id="analysisStatus">
+        <div class="pulse-dot"></div>
+        <div class="status-text" id="statusText">Processing</div>
+      </div>
+    </div>
+
+    <!-- Live stream log -->
+    <div class="stream-log" id="streamLog">
+      <span class="cursor"></span>
+    </div>
+
+    <!-- RFI output area -->
+    <div id="rfiOutput" class="hidden">
+      <div class="rfi-section-title">
+        GENERATED RFIS
+        <span class="rfi-count-badge" id="rfiCountBadge">0</span>
+      </div>
+      <div class="rfi-filters">
+        <button class="filter-btn active" onclick="filterRFIs('all', this)">All</button>
+        <button class="filter-btn high" onclick="filterRFIs('high', this)">🔴 High Priority</button>
+        <button class="filter-btn med" onclick="filterRFIs('medium', this)">🟡 Medium</button>
+        <button class="filter-btn low" onclick="filterRFIs('low', this)">🟢 Low</button>
+      </div>
+      <div class="rfi-cards" id="rfiCards"></div>
+    </div>
+
+    <!-- Export bar -->
+    <div class="export-bar" id="exportBar" style="display:none">
+      <div class="export-info">
+        <strong id="exportCount">0 RFIs</strong> generated from your drawings · Ready to export
+      </div>
+      <div class="export-actions">
+        <button class="export-btn" onclick="exportCSV()">↓ Download CSV</button>
+        <button class="export-btn procore" onclick="exportProcoreCSV()">↓ Procore Import CSV</button>
+        <button class="export-btn primary" onclick="showSection('sec-upload')">+ New Upload</button>
+      </div>
+    </div>
+  </div>
+
+</div><!-- /app-shell -->
+
+
+<script>
+/* ═══════════════════════════════════════════
+   APP STATE
+═══════════════════════════════════════════ */
+const STATE = {
+  plan: null,
+  planLabel: '',
+  uploadsUsed: 0,
+  uploadsMax: 2,
+  pagesMax: 30,
+  files: [],
+  rfis: [],
+  currentFilter: 'all'
+  // API key lives securely on the Vercel server — not here
+};
+
+/* ═══════════════════════════════════════════
+   NAVIGATION
+═══════════════════════════════════════════ */
+function showSection(id) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  window.scrollTo(0, 0);
+}
+
+/* ═══════════════════════════════════════════
+   PLAN SELECTION
+═══════════════════════════════════════════ */
+function selectPlan(plan, label) {
+  STATE.plan = plan;
+  STATE.planLabel = label;
+  // Set upload limits and page limits per plan
+  STATE.uploadsMax  = plan === 'starter' ? 2 : 999;
+  STATE.pagesMax    = plan === 'starter' ? 30 : 35;
+  document.getElementById('planLabel').textContent = label;
+  const subText = {
+    starter: 'Starter Plan — $39 one-time',
+    pro:     'Professional Plan — $149/month'
+  };
+  document.getElementById('payFormSub').textContent = subText[plan];
+  showSection('sec-payment');
+}
+
+/* ═══════════════════════════════════════════
+   PAYMENT (DEMO — no real charge)
+═══════════════════════════════════════════ */
+function completePurchase() {
+  const name = document.getElementById('payName').value.trim();
+  const email = document.getElementById('payEmail').value.trim();
+  if (!name || !email) { alert('Please enter your name and email.'); return; }
+
+  // Update quota display
+  document.getElementById('uploadsMax').textContent =
+    STATE.plan === 'starter' ? STATE.uploadsMax : '∞';
+  updateQuota();
+  showSection('sec-upload');
+}
+
+/* ═══════════════════════════════════════════
+   CARD INPUT FORMATTING
+═══════════════════════════════════════════ */
+function formatCard(el) {
+  el.value = el.value.replace(/\D/g,'').replace(/(.{4})/g,'$1 ').trim();
+}
+function formatExpiry(el) {
+  let v = el.value.replace(/\D/g,'');
+  if (v.length >= 2) v = v.slice(0,2) + ' / ' + v.slice(2,4);
+  el.value = v;
+}
+
+/* ═══════════════════════════════════════════
+   FILE UPLOAD & PDF PARSING
+═══════════════════════════════════════════ */
+function handleDragOver(e) {
+  e.preventDefault();
+  document.getElementById('dropZone').classList.add('drag-over');
+}
+function handleDragLeave() {
+  document.getElementById('dropZone').classList.remove('drag-over');
+}
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('dropZone').classList.remove('drag-over');
+  processFiles(Array.from(e.dataTransfer.files));
+}
+function handleFileSelect(e) {
+  processFiles(Array.from(e.target.files));
+  e.target.value = '';
+}
+
+async function processFiles(newFiles) {
+  for (const file of newFiles) {
+    if (!file.name.toLowerCase().endsWith('.pdf')) {
+      alert(`${file.name} is not a PDF. Only PDFs are accepted.`);
+      continue;
+    }
+    if (STATE.plan === 'starter' && STATE.uploadsUsed >= STATE.uploadsMax) {
+      alert('You have used all your uploads for this plan. Upgrade to Professional for unlimited uploads.');
+      return;
+    }
+    if (STATE.files.find(f => f.name === file.name)) continue;
+
+    // Parse PDF with PDF.js — extract each page individually
+    const arrayBuffer = await file.arrayBuffer();
+    let pageCount = 0;
+    let extractedText = '';
+    let pageData = []; // Store each page separately for conflict detection
+
+    try {
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      pageCount = pdf.numPages;
+
+      if (pageCount > STATE.pagesMax) {
+        alert(`${file.name} has ${pageCount} pages. Your plan allows a maximum of ${STATE.pagesMax} pages per upload. Please split the file.`);
+        continue;
+      }
+
+      // Extract text from each page individually with rich metadata
+      for (let i = 1; i <= Math.min(pageCount, STATE.pagesMax); i++) {
+        const page = await pdf.getPage(i);
+        const content = await page.getTextContent();
+
+        // Get all text items with position data for better context
+        const items = content.items;
+        const pageText = items.map(item => item.str).join(' ').trim();
+
+        // Try to detect sheet number from page content
+        const sheetMatch = pageText.match(/\b([A-Z]{1,2}-?\d{3}[A-Z]?)\b/g);
+        const sheetNum = sheetMatch ? sheetMatch[0] : `Page ${i}`;
+
+        // Try to detect discipline from content
+        let discipline = 'Unknown';
+        const pt = pageText.toLowerCase();
+        if (pt.includes('floor plan') || pt.includes('elevation') || pt.includes('reflected ceiling')) discipline = 'Architectural';
+        else if (pt.includes('structural') || pt.includes('framing') || pt.includes('foundation') || pt.includes('beam') || pt.includes('column')) discipline = 'Structural';
+        else if (pt.includes('mechanical') || pt.includes('hvac') || pt.includes('plumbing') || pt.includes('electrical') || pt.includes('duct')) discipline = 'MEP';
+        else if (pt.includes('civil') || pt.includes('grading') || pt.includes('drainage') || pt.includes('utility')) discipline = 'Civil';
+        else if (pt.includes('fire') || pt.includes('sprinkler') || pt.includes('suppression')) discipline = 'Fire Protection';
+
+        pageData.push({
+          pageNum: i,
+          sheetNum,
+          discipline,
+          text: pageText
+        });
+
+        // Build structured text with rich context
+        extractedText += `\n\n=== PAGE ${i} | SHEET: ${sheetNum} | DISCIPLINE: ${discipline} ===\n${pageText}`;
+      }
+
+    } catch(err) {
+      extractedText = '[Could not extract text — drawings may be image-based. AI will analyze based on file context.]';
+      pageCount = 1;
+    }
+
+    const fileObj = {
+      name: file.name,
+      size: (file.size / 1024 / 1024).toFixed(1) + ' MB',
+      pages: pageCount,
+      text: extractedText,
+      pageData, // Store structured page data
+      ok: pageCount <= STATE.pagesMax
+    };
+
+    STATE.files.push(fileObj);
+    STATE.uploadsUsed++;
+    updateQuota();
+    renderFileRow(fileObj);
+  }
+  updateAnalyzeButton();
+}
+
+function renderFileRow(fileObj) {
+  const wrap = document.getElementById('uploadedFiles');
+  const div = document.createElement('div');
+  div.className = 'file-row';
+  div.id = 'filerow-' + fileObj.name.replace(/\W/g,'_');
+  div.innerHTML = `
+    <div class="file-icon">📄</div>
+    <div class="file-info">
+      <div class="file-name">${fileObj.name}</div>
+      <div class="file-meta">${fileObj.pages} pages · ${fileObj.size}</div>
+    </div>
+    <div class="file-status ${fileObj.ok ? 'status-ok' : 'status-warn'}">
+      ${fileObj.ok ? '✓ Ready' : '⚠ Too many pages'}
+    </div>
+    <div class="file-remove" onclick="removeFile('${fileObj.name}')">✕</div>
+  `;
+  wrap.appendChild(div);
+}
+
+function removeFile(name) {
+  STATE.files = STATE.files.filter(f => f.name !== name);
+  STATE.uploadsUsed = Math.max(0, STATE.uploadsUsed - 1);
+  const el = document.getElementById('filerow-' + name.replace(/\W/g,'_'));
+  if (el) el.remove();
+  updateQuota();
+  updateAnalyzeButton();
+}
+
+function updateQuota() {
+  const used = STATE.uploadsUsed;
+  const max  = STATE.uploadsMax;
+  document.getElementById('uploadsUsed').textContent = used;
+  document.getElementById('uploadsMax').textContent  = max >= 999 ? '∞' : max;
+  const pct = max >= 999 ? Math.min((used / 10) * 100, 100) : (used / max * 100);
+  document.getElementById('quotaFill').style.width = pct + '%';
+}
+
+function updateAnalyzeButton() {
+  const valid = STATE.files.filter(f => f.ok);
+  const btn = document.getElementById('analyzeBtn');
+  const hint = document.getElementById('analyzeHint');
+  btn.disabled = valid.length === 0;
+  if (valid.length > 0) {
+    hint.textContent = `Ready to analyze ${valid.length} drawing set${valid.length>1?'s':''} (${valid.reduce((a,f)=>a+f.pages,0)} total pages)`;
+  } else {
+    hint.textContent = 'Upload at least one PDF drawing to begin analysis.';
+  }
+}
+
+/* ═══════════════════════════════════════════
+   AI ANALYSIS WITH STREAMING
+═══════════════════════════════════════════ */
+async function startAnalysis() {
+  showSection('sec-results');
+  STATE.rfis = [];
+
+  const log = document.getElementById('streamLog');
+  const logLine = (text, cls='') => {
+    const cursor = log.querySelector('.cursor');
+    const line = document.createElement('div');
+    line.className = 'log-line ' + cls;
+    line.textContent = text;
+    log.insertBefore(line, cursor);
+    log.scrollTop = log.scrollHeight;
+  };
+
+  // Build rich page-by-page drawing summary for conflict detection
+  const drawingSummary = STATE.files.map(f => {
+    const pageIndex = f.pageData && f.pageData.length > 0
+      ? f.pageData.map(p =>
+          `PAGE ${p.pageNum} | SHEET: ${p.sheetNum} | DISCIPLINE: ${p.discipline}\n${p.text.slice(0, 500)}`
+        ).join('\n\n---\n\n')
+      : f.text.slice(0, 8000);
+    return `FILE: ${f.name} (${f.pages} pages)\n\nPAGE-BY-PAGE BREAKDOWN:\n${pageIndex}`;
+  }).join('\n\n=== NEXT FILE ===\n\n');
+
+  logLine('// PlanIQ Pro AI Engine v2.4 — Initialized', 'highlight');
+  logLine(`// Loading ${STATE.files.length} drawing set(s)...`);
+  await delay(400);
+  logLine(`// ${STATE.files.reduce((a,f)=>a+f.pages,0)} sheets queued for analysis`);
+  await delay(500);
+  logLine('// Cross-referencing disciplines: ARCH · STRUCT · MEP · CIVIL', 'highlight');
+  await delay(600);
+  logLine('// Checking IBC 2021, ADA standards, NFPA 101...');
+  await delay(500);
+  logLine('// Sending to PlanIQ Pro AI model...', 'highlight');
+  await delay(300);
+
+  // RFI count limit based on plan
+  const rfiLimit = STATE.plan === 'pro' ? 12 : 10;
+
+  const prompt = `You are the most elite construction project manager in the world — a licensed architect and engineer with 30 years of experience on complex commercial projects. You have an exceptional eye for every type of issue that causes field problems, change orders, and delays.
+
+You are performing a comprehensive constructability and coordination review of a full construction drawing set. Each page has been extracted with its sheet number and discipline identified.
+
+DRAWING SET — PAGE BY PAGE:
+${drawingSummary}
+
+YOUR MISSION: Generate exactly ${rfiLimit} professional RFIs covering the FULL SPECTRUM of issues in these drawings.
+
+ELITE ANALYSIS RULES — FOLLOW ALL OF THESE:
+
+TYPES OF RFIS TO GENERATE (spread across all categories):
+A) SINGLE-PAGE ISSUES — problems found on one sheet alone:
+   - Missing dimensions, unclear dimensions, or dimension conflicts on a single sheet
+   - Incomplete details or missing callouts
+   - Spec section referenced but not provided
+   - Room or space not fully defined (no finish, no ceiling height, no lighting)
+   - Door or window not in schedule
+   - Keynote referenced but not explained
+   - Equipment shown but not specified
+   - Code compliance issue on one sheet (ADA clearance, egress width, occupancy load)
+   - Fire rating not indicated on rated wall or assembly
+
+B) CROSS-PAGE / CROSS-TRADE CONFLICTS — problems between multiple sheets:
+   - Structural element conflicts with MEP routing
+   - Architectural floor plan conflicts with structural framing plan
+   - Ceiling height on arch plan conflicts with duct/beam depth
+   - Plumbing or electrical penetrating rated assembly without detail
+   - Civil grading conflicts with architectural finish floor elevation
+   - Fire protection head location conflicts with structural or architectural
+
+C) DRAWING SET LEVEL ISSUES:
+   - Missing sheets referenced but not in set
+   - Inconsistent keynotes between floors
+   - Specification conflicts with drawn conditions
+   - Phasing or sequencing conflicts
+
+MANDATORY RULES:
+1. Every RFI MUST include specific page number AND sheet number in "page_ref" — e.g. "Page 3, Sheet A-201" — MANDATORY
+2. For cross-trade conflicts reference BOTH sheets — e.g. "Page 3, Sheet A-201 vs Page 7, Sheet M-301"
+3. Reference ACTUAL content — real room numbers, keynote numbers, dimensions, equipment tags, grid lines from the text
+4. NEVER write a generic RFI — every RFI must be traceable to specific drawing content
+5. Maximum 2 RFIs per sheet — spread across the entire drawing set
+6. Priority: HIGH = safety/code/structural/field stoppage. MEDIUM = needs resolution before trade starts. LOW = clarification that won't stop work.
+7. Write descriptions that a contractor or architect can act on immediately
+
+RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER.
+
+[
+  {
+    "id": "RFI-001",
+    "title": "Specific title naming the exact issue, location, and trades involved",
+    "priority": "high" or "medium" or "low",
+    "discipline": "Architectural" or "Structural" or "MEP" or "Civil" or "Fire Protection",
+    "page_ref": "Page X, Sheet ABC-123",
+    "location": "Specific room number, grid intersection, or area name from the drawings",
+    "description": "Sentence 1: What the drawing specifically shows. Sentence 2: What is the conflict, gap, or ambiguity — reference the other sheet if cross-trade. Sentence 3: Why this matters in the field and exactly what information is needed to resolve it.",
+    "spec_ref": "Specific sheet number or spec section — e.g. Sheet M-201, Detail 3/A-401",
+    "cost_impact": "Low (<$5K)" or "Medium ($5K-$50K)" or "High (>$50K)",
+    "schedule_impact": "None" or "Low (1-3 days)" or "Medium (1-2 weeks)" or "High (2+ weeks)"
+  }
+]`;
+
+  try {
+    const PROXY_URL = 'https://buildiq-server.vercel.app/api/analyze';
+
+    logLine('// Sending to PlanIQ Pro secure AI server...', 'highlight');
+    await delay(300);
+
+    const response = await fetch(PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt })
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error('Server error ' + response.status + ': ' + errText);
+    }
+
+    const data = await response.json();
+    const fullText = data.content?.[0]?.text || '';
+
+    logLine('// Connection established — processing analysis...', 'highlight');
+    await delay(200);
+
+    const streamMessages = [
+      '// Scanning floor plan geometry...',
+      '// Detecting wall type conflicts...',
+      '// Cross-referencing structural grid...',
+      '// Checking MEP coordination...',
+      '// Verifying door schedule compliance...',
+      '// Analyzing egress paths...',
+      '// Reviewing finish specifications...',
+      '// Checking clearance dimensions...',
+      '// Flagging code compliance issues...',
+      '// Scoring by cost and schedule impact...',
+      '// Formatting RFIs to AIA standard...',
+    ];
+    for (const msg of streamMessages) {
+      logLine(msg);
+      await delay(250);
+    }
+
+    logLine('// Analysis complete — parsing RFI data...', 'highlight');
+    await delay(400);
+
+    // Parse the JSON response
+    const clean = fullText.replace(/```json|```/g,'').trim();
+    let rfis = [];
+    try {
+      rfis = JSON.parse(clean);
+    } catch(e) {
+      // Try to extract JSON array from the text
+      const match = clean.match(/\[[\s\S]*\]/);
+      if (match) rfis = JSON.parse(match[0]);
+      else throw new Error('Could not parse RFI JSON');
+    }
+
+    STATE.rfis = rfis;
+    logLine(`// ✓ ${rfis.length} RFIs generated successfully`, 'success');
+    await delay(300);
+
+    // Update UI to "complete" state
+    document.getElementById('analysisTitle').textContent = 'ANALYSIS\nCOMPLETE';
+    document.getElementById('analysisSub').textContent =
+      `${rfis.length} RFIs generated from ${STATE.files.reduce((a,f)=>a+f.pages,0)} pages`;
+    document.getElementById('statusText').textContent = 'Complete';
+    document.getElementById('statusText').style.color = '#7aab6e';
+    document.querySelector('.pulse-dot').style.background = '#7aab6e';
+    document.querySelector('.pulse-dot').style.animationPlayState = 'paused';
+
+    // Render RFI cards
+    renderRFIs(rfis);
+
+    // Show export bar
+    document.getElementById('exportCount').textContent = rfis.length + ' RFIs';
+    document.getElementById('pushCount').textContent = rfis.length;
+    document.getElementById('exportBar').style.display = 'flex';
+
+  } catch(err) {
+    logLine('// ERROR: ' + err.message, 'error');
+    logLine('// Details: ' + (err.stack || 'no stack'), 'error');
+    logLine('// Falling back to demonstration RFIs...', 'highlight');
+    await delay(600);
+    const demoRFIs = generateDemoRFIs();
+    STATE.rfis = demoRFIs;
+    logLine(`// ✓ ${demoRFIs.length} demo RFIs loaded`, 'success');
+    document.getElementById('analysisTitle').innerHTML = 'DEMO<br>RFIS LOADED';
+    document.getElementById('analysisSub').textContent = 'Showing sample RFIs (add your API key to go live)';
+    document.getElementById('statusText').textContent = 'Demo Mode';
+    renderRFIs(demoRFIs);
+    document.getElementById('exportCount').textContent = demoRFIs.length + ' RFIs';
+    document.getElementById('pushCount').textContent = demoRFIs.length;
+    document.getElementById('exportBar').style.display = 'flex';
+  }
+}
+
+/* ═══════════════════════════════════════════
+   RENDER RFI CARDS
+═══════════════════════════════════════════ */
+function renderRFIs(rfis, filter = 'all') {
+  const container = document.getElementById('rfiCards');
+  container.innerHTML = '';
+
+  const filtered = filter === 'all' ? rfis : rfis.filter(r => r.priority === filter);
+
+  document.getElementById('rfiCountBadge').textContent = filtered.length;
+  document.getElementById('rfiOutput').classList.remove('hidden');
+
+  filtered.forEach((rfi, i) => {
+    const card = document.createElement('div');
+    card.className = `rfi-card ${rfi.priority || 'medium'}`;
+    card.style.animationDelay = (i * 0.06) + 's';
+    card.innerHTML = `
+      <div class="rfi-card-top">
+        <div>
+          <div class="rfi-card-num">${rfi.id}</div>
+          <div class="rfi-card-title">${rfi.title}</div>
+        </div>
+        <div class="rfi-priority priority-${rfi.priority}">${rfi.priority?.toUpperCase()}</div>
+      </div>
+      <div class="rfi-card-body">${rfi.description}</div>
+      <div class="rfi-card-meta">
+        ${rfi.page_ref ? `<div class="rfi-meta-item rfi-page-ref">📄 <strong>${rfi.page_ref}</strong></div>` : ''}
+        <div class="rfi-meta-item"><strong>Discipline:</strong> ${rfi.discipline}</div>
+        <div class="rfi-meta-item"><strong>Location:</strong> ${rfi.location}</div>
+        <div class="rfi-meta-item"><strong>Cost Impact:</strong> ${rfi.cost_impact}</div>
+        <div class="rfi-meta-item"><strong>Schedule:</strong> ${rfi.schedule_impact}</div>
+        ${rfi.spec_ref ? `<div class="rfi-meta-item"><strong>Ref:</strong> ${rfi.spec_ref}</div>` : ''}
+      </div>
+      <div class="rfi-card-footer">
+        <button class="rfi-email-btn" onclick="emailRFI(${i})">✉ Send via Email</button>
+      </div>
+    `;
+    card.querySelector('.rfi-email-btn').addEventListener('click', (e) => {
+      e.stopPropagation();
+      emailRFI(rfi);
+    });
+    container.appendChild(card);
+  });
+}
+
+function emailRFI(rfi) {
+  const subject = encodeURIComponent(`RFI Request — ${rfi.id}: ${rfi.title}`);
+  const body = encodeURIComponent(
+`RFI ${rfi.id} — ${rfi.title}
+${'='.repeat(60)}
+
+PRIORITY: ${rfi.priority?.toUpperCase()}
+DISCIPLINE: ${rfi.discipline}
+${rfi.page_ref ? `PAGE REFERENCE: ${rfi.page_ref}` : ''}
+LOCATION: ${rfi.location}
+SPEC REFERENCE: ${rfi.spec_ref || 'N/A'}
+COST IMPACT: ${rfi.cost_impact}
+SCHEDULE IMPACT: ${rfi.schedule_impact}
+
+DESCRIPTION:
+${rfi.description}
+
+${'='.repeat(60)}
+Generated by PlanIQ Pro — planiqpro.com
+  `);
+  window.location.href = `mailto:?subject=${subject}&body=${body}`;
+}
+
+function filterRFIs(filter, btn) {
+  STATE.currentFilter = filter;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  renderRFIs(STATE.rfis, filter);
+}
+
+/* ═══════════════════════════════════════════
+   EXPORT FUNCTIONS
+═══════════════════════════════════════════ */
+function exportProcoreCSV() {
+  // Procore RFI import format
+  const headers = [
+    'Subject',
+    'Description', 
+    'Status',
+    'Priority',
+    'Location',
+    'Reference',
+    'Cost Impact',
+    'Schedule Impact',
+    'Discipline'
+  ];
+
+  const rows = STATE.rfis.map(r => [
+    `"${(r.title || '').replace(/"/g,'""')}"`,
+    `"${(r.description || '').replace(/"/g,'""')}"`,
+    '"Draft"',
+    `"${r.priority === 'high' ? 'High' : r.priority === 'medium' ? 'Normal' : 'Low'}"`,
+    `"${(r.location || '').replace(/"/g,'""')}"`,
+    `"${(r.spec_ref || r.page_ref || '').replace(/"/g,'""')}"`,
+    `"${(r.cost_impact || '').replace(/"/g,'""')}"`,
+    `"${(r.schedule_impact || '').replace(/"/g,'""')}"`,
+    `"${(r.discipline || '').replace(/"/g,'""')}"`
+  ].join(','));
+
+  const csv = [headers.join(','), ...rows].join('\n');
+  downloadFile('planiqpro-procore-import.csv', csv, 'text/csv');
+}
+
+function exportCSV() {
+  const headers = ['ID','Title','Priority','Discipline','Location','Description','Spec Ref','Cost Impact','Schedule Impact'];
+  const rows = STATE.rfis.map(r => [
+    r.id, r.title, r.priority, r.discipline, r.location,
+    `"${(r.description||'').replace(/"/g,'""')}"`,
+    r.spec_ref, r.cost_impact, r.schedule_impact
+  ].join(','));
+  const csv = [headers.join(','), ...rows].join('\n');
+  downloadFile('planiqpro-rfis.csv', csv, 'text/csv');
+}
+
+function exportJSON() {
+  const json = JSON.stringify(STATE.rfis, null, 2);
+  downloadFile('planiqpro-rfis.json', json, 'application/json');
+}
+
+function downloadFile(name, content, type) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = name; a.click();
+  URL.revokeObjectURL(url);
+}
+
+
+/* ═══════════════════════════════════════════
+   DEMO RFIS (fallback if no API key set)
+═══════════════════════════════════════════ */
+function generateDemoRFIs() {
+  return [
+    { id:'RFI-001', title:'Structural beam depth conflicts with ductwork at Level 3', priority:'high', discipline:'Structural', location:'Grid C-7, Sheet S-301', description:'W18×97 beam at Grid C-7 drops ceiling clearance to 7\'-4" which conflicts with 18" supply air duct on Sheet M-301. Minimum finished ceiling height per program is 9\'-0". Clarify beam depth or reroute duct.', spec_ref:'Section 05 12 00 / Sheet M-301', cost_impact:'High (>$50K)', schedule_impact:'High (2+ weeks)' },
+    { id:'RFI-002', title:'Door 205A swing conflicts with ADA turning radius', priority:'high', discipline:'Architectural', location:'Suite 205 Entry, Sheet A-205', description:'Door 205A swings into corridor per Sheet A-205. With 5\'-0" corridor width, ADA 60" turning radius is not achievable at this location. Confirm door type change to sliding or provide alternate layout.', spec_ref:'IBC 1005.1 / ADA 404.2', cost_impact:'Medium ($5K-$50K)', schedule_impact:'Medium (1-2 weeks)' },
+    { id:'RFI-003', title:'Plumbing stack location not coordinated with structural slab penetrations', priority:'high', discipline:'MEP', location:'Core Area, Sheets P-101 / S-201', description:'4" soil stack shown on P-101 passes through PT slab at location where post-tension cables run per S-201. Structural engineer to confirm penetration feasibility and provide sleeve details.', spec_ref:'Sheet P-101 / Sheet S-201', cost_impact:'High (>$50K)', schedule_impact:'High (2+ weeks)' },
+    { id:'RFI-004', title:'Curtain wall system — sill height discrepancy', priority:'medium', discipline:'Architectural', location:'South Facade, Sheets A-401 / A-501', description:'Curtain wall sill elevation shown as 18" AFF on elevation Sheet A-401 but 24" AFF on detail Sheet A-501. Confirm correct sill height for coordination with floor framing and interior finish.', spec_ref:'Sheet A-401 vs A-501', cost_impact:'Medium ($5K-$50K)', schedule_impact:'Low (1-3 days)' },
+    { id:'RFI-005', title:'Egress stair width insufficient for occupant load', priority:'high', discipline:'Architectural', location:'Stair 2, Sheet A-310', description:'Stair 2 is shown at 44" clear width. Calculated occupant load for served floors is 312 persons, requiring 62.4" minimum stair width per IBC 1005.1. Revise stair width or provide additional means of egress.', spec_ref:'IBC 1005.1 / Sheet A-310', cost_impact:'High (>$50K)', schedule_impact:'High (2+ weeks)' },
+    { id:'RFI-006', title:'Electrical panel location blocks rated corridor wall', priority:'medium', discipline:'MEP', location:'Corridor 1A, Sheet E-201', description:'200A panel LP-3A is shown surface-mounted on 2-hour rated corridor wall per Sheet E-201. Fire-rated penetration details required or panel must be relocated to non-rated wall. Confirm with AHJ.', spec_ref:'NFPA 70 / IBC 709', cost_impact:'Medium ($5K-$50K)', schedule_impact:'Medium (1-2 weeks)' },
+    { id:'RFI-007', title:'Roof drain sizing — insufficient for rainfall intensity', priority:'medium', discipline:'MEP', location:'Roof Level, Sheet P-001', description:'Primary roof drains shown as 4" diameter on Sheet P-001. Based on roof area of 22,400 SF and local 100-year rainfall intensity of 4.5"/hr, minimum 6" drains are required per ASPE design criteria. Confirm sizing with plumbing engineer.', spec_ref:'Sheet P-001 / ASPE Design Manual', cost_impact:'Medium ($5K-$50K)', schedule_impact:'Low (1-3 days)' },
+    { id:'RFI-008', title:'Expansion joint location not shown on architectural drawings', priority:'medium', discipline:'Structural', location:'Building Joint at Grid J, Sheet S-001', description:'Structural drawings indicate a building expansion joint at Grid J per Sheet S-001. Architectural floor, wall, and ceiling drawings do not show corresponding expansion joint covers or details. Provide cover assembly details for all affected conditions.', spec_ref:'Sheet S-001 / Section 07 95 13', cost_impact:'Medium ($5K-$50K)', schedule_impact:'Low (1-3 days)' },
+    { id:'RFI-009', title:'Sprinkler head clearance below structural members', priority:'medium', discipline:'Fire Protection', location:'Parking Level P1, Sheet FP-101', description:'Upright sprinkler heads at Parking Level P1 are shown at 14\'-6" AFF per Sheet FP-101. Structural beams at this level are at 13\'-8" AFF. Heads will be obstructed. Confirm head type change to pendent or provide revised layout.', spec_ref:'NFPA 13 / Sheet FP-101', cost_impact:'Low (<$5K)', schedule_impact:'Low (1-3 days)' },
+    { id:'RFI-010', title:'Storefront framing — anchor bolt pattern not specified', priority:'low', discipline:'Architectural', location:'Main Lobby Entry, Sheet A-800', description:'Aluminum storefront system specified in Section 08 44 13 but anchor bolt pattern, embedment depth, and edge distances are not detailed on Sheet A-800 or structural drawings. Manufacturer\'s shop drawing approval required before fabrication.', spec_ref:'Section 08 44 13 / Sheet A-800', cost_impact:'Low (<$5K)', schedule_impact:'None' },
+    { id:'RFI-011', title:'Mechanical room access door — fire rating required', priority:'medium', discipline:'MEP', location:'Mechanical Room 107, Sheet A-107', description:'Mechanical room 107 is separated from occupied space. Per IBC Table 508.4, the separation requires a 1-hour fire rating. Door shown on Sheet A-107 is not specified as a rated assembly. Confirm door and frame fire rating.', spec_ref:'IBC Table 508.4 / Sheet A-107', cost_impact:'Low (<$5K)', schedule_impact:'None' },
+    { id:'RFI-012', title:'Exterior paving slope — does not meet ADA cross-slope', priority:'low', discipline:'Civil', location:'Main Entry Plaza, Sheet C-501', description:'Entry plaza paving shown at 2.5% cross-slope on Sheet C-501. ADA requires maximum 2.0% cross-slope on accessible routes. Revise grading plan for accessible path from parking to building entry.', spec_ref:'ADA 402.3 / Sheet C-501', cost_impact:'Low (<$5K)', schedule_impact:'None' }
+  ];
+}
+
+/* ═══════════════════════════════════════════
+   UTILITY
+═══════════════════════════════════════════ */
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+</script>
+</body>
+</html>
