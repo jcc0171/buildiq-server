@@ -484,8 +484,13 @@ body::before {
   ═══════════════════════════════════════ -->
   <div class="section" id="sec-upload">
     <div class="upload-header">
-      <div class="upload-label">// Step 1 of 2 — Upload Drawings</div>
-      <h2 class="upload-title">UPLOAD YOUR<br><em>construction</em> DRAWINGS</h2>
+      <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+        <div>
+          <div class="upload-label" id="uploadStepLabel">// Step 1 of 2 — Upload Drawings</div>
+          <h2 class="upload-title">UPLOAD YOUR<br><em>construction</em> DRAWINGS</h2>
+        </div>
+        <button id="uploadBackBtn" onclick="showSection('sec-plans')" style="display:none; font-family:var(--mono);font-size:11px;letter-spacing:1px;text-transform:uppercase;border:1px solid var(--line);background:white;color:var(--ink);padding:8px 18px;cursor:pointer;margin-top:8px;transition:all 0.2s;" onmouseover="this.style.background='var(--ink)';this.style.color='var(--paper)'" onmouseout="this.style.background='white';this.style.color='var(--ink)'">← Back to Home</button>
+      </div>
     </div>
 
     <!-- Quota display -->
@@ -523,13 +528,16 @@ body::before {
   <div class="section" id="sec-results">
     <div class="analysis-header">
       <div class="analysis-title-wrap">
-        <div class="upload-label">// Step 2 of 2 — RFI Analysis</div>
+        <div class="upload-label" id="resultsStepLabel">// Step 2 of 2 — RFI Analysis</div>
         <div class="analysis-title" id="analysisTitle">ANALYZING<br>DRAWINGS...</div>
         <div class="analysis-sub" id="analysisSub">AI is reading your construction documents</div>
       </div>
-      <div class="analysis-status" id="analysisStatus">
-        <div class="pulse-dot"></div>
-        <div class="status-text" id="statusText">Processing</div>
+      <div style="display:flex; flex-direction:column; align-items:flex-end; gap:12px; flex-shrink:0;">
+        <div class="analysis-status" id="analysisStatus">
+          <div class="pulse-dot"></div>
+          <div class="status-text" id="statusText">Processing</div>
+        </div>
+        <button id="backToHomeBtn" onclick="showSection('sec-plans')" style="display:none; font-family:var(--mono);font-size:11px;letter-spacing:1px;text-transform:uppercase;border:1px solid var(--line);background:white;color:var(--ink);padding:8px 18px;cursor:pointer;transition:all 0.2s;" onmouseover="this.style.background='var(--ink)';this.style.color='var(--paper)'" onmouseout="this.style.background='white';this.style.color='var(--ink)'">← Back to Home</button>
       </div>
     </div>
 
@@ -661,10 +669,44 @@ function runDemo() {
   STATE.plan = 'demo';
   STATE.planLabel = 'Demo';
   STATE.rfis = [];
+  STATE.files = [];
+  STATE.uploadsUsed = 0;
+  STATE.uploadsMax = 999;
+  STATE.pagesMax = 30;
   document.getElementById('planLabel').textContent = 'Demo';
+
+  // Update upload section for demo context
+  document.getElementById('uploadStepLabel').textContent = '// Demo Mode — Try It Yourself';
+  document.getElementById('uploadsMax').textContent = '∞';
+  document.getElementById('uploadedFiles').innerHTML = '';
+  document.getElementById('analyzeBtn').disabled = true;
+  document.getElementById('analyzeHint').textContent = 'Upload a PDF drawing — or click "Analyze Drawings" to see a demo with sample RFIs.';
+
+  // Enable analyze button even without upload for demo
+  const btn = document.getElementById('analyzeBtn');
+  btn.disabled = false;
+  btn.textContent = 'Run Demo Analysis →';
+  btn.onclick = function() { startDemoAnalysis(); };
+
+  // Show back buttons
+  document.getElementById('uploadBackBtn').style.display = 'block';
+
+  updateQuota();
+  showSection('sec-upload');
+}
+
+function startDemoAnalysis() {
+  // Reset analyze button for next time
+  const btn = document.getElementById('analyzeBtn');
+  btn.textContent = 'Analyze Drawings →';
+  btn.onclick = function() { startAnalysis(); };
+
   showSection('sec-results');
+  document.getElementById('resultsStepLabel').textContent = '// Demo Mode — Sample RFIs';
+  document.getElementById('backToHomeBtn').style.display = 'block';
 
   const log = document.getElementById('streamLog');
+  log.innerHTML = '<span class="cursor"></span>';
   const logLine = (text, cls='') => {
     const cursor = log.querySelector('.cursor');
     const line = document.createElement('div');
