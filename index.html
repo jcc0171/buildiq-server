@@ -425,7 +425,7 @@ body::before {
         <div class="plan-feat">Full AI RFI analysis</div>
         <div class="plan-feat">PDF + CSV export</div>
         <div class="plan-feat">✉ Email any RFI instantly</div>
-        <button class="plan-btn" onclick="window.location.href='https://buy.stripe.com/00w4gz7hkbSM4IydDbc7u00'">Get Started →</button>
+        <button class="plan-btn" onclick="selectPlan('starter','Starter')">Get Started →</button>
       </div>
       <div class="plan-card featured">
         <div class="plan-card-tag">Best Value</div>
@@ -439,44 +439,42 @@ body::before {
         <div class="plan-feat">Full AI RFI analysis</div>
         <div class="plan-feat">PDF + CSV export</div>
         <div class="plan-feat">✉ Email any RFI instantly</div>
-        
-        <button class="plan-btn" onclick="window.location.href='https://buy.stripe.com/6oUcN50SW6ys7UK7eNc7u01'">Get Started →</button>
+        <button class="plan-btn" onclick="selectPlan('pro','Professional')">Get Started →</button>
       </div>
+    </div>
+
+    <!-- Free Demo CTA -->
+    <div style="text-align:center; margin-top:32px; padding:28px 24px; border:1px dashed rgba(13,13,13,0.18); background:rgba(255,255,255,0.5);">
+      <div style="font-family:var(--mono); font-size:11px; letter-spacing:2px; text-transform:uppercase; opacity:0.5; margin-bottom:8px;">Not ready to buy?</div>
+      <div style="font-family:var(--disp); font-size:26px; margin-bottom:8px;">TRY THE FREE DEMO</div>
+      <div style="font-family:var(--mono); font-size:12px; opacity:0.55; margin-bottom:18px;">See 12 real sample RFIs generated instantly — no payment required</div>
+      <button onclick="runDemo()" style="font-family:var(--mono);font-size:12px;letter-spacing:1px;text-transform:uppercase;border:2px solid var(--ink);background:transparent;color:var(--ink);padding:11px 32px;cursor:pointer;transition:all 0.2s;" onmouseover="this.style.background='var(--ink)';this.style.color='var(--paper)'" onmouseout="this.style.background='transparent';this.style.color='var(--ink)'">View Demo RFIs →</button>
     </div>
   </div>
 
   <!-- ═══════════════════════════════════════
-       SECTION 1b — PAYMENT FORM
+       SECTION 1b — STRIPE REDIRECT SCREEN
   ═══════════════════════════════════════ -->
   <div class="section" id="sec-payment">
-    <div style="max-width:520px; margin:0 auto; padding:40px 0;">
+    <div style="max-width:520px; margin:60px auto; padding:40px; background:white; border:1px solid var(--line); box-shadow: 8px 8px 0 rgba(13,13,13,0.08);">
       <div class="pay-form-title" id="payFormTitle">Complete Your Order</div>
-      <div class="pay-form-sub" id="payFormSub">Starter Plan — $39 one-time</div>
+      <div class="pay-form-sub" id="payFormSub" style="margin-bottom:28px;">Starter Plan — $39 one-time</div>
 
-      <div class="pay-field">
-        <label class="pay-label">Full Name</label>
-        <input type="text" class="pay-input" id="payName" placeholder="Jane Smith"/>
-      </div>
-      <div class="pay-field">
-        <label class="pay-label">Email Address</label>
-        <input type="email" class="pay-input" id="payEmail" placeholder="jane@yourcompany.com"/>
-      </div>
-      <div class="pay-field">
-        <label class="pay-label">Card Number</label>
-        <input type="text" class="pay-input" placeholder="4242 4242 4242 4242" maxlength="19" oninput="formatCard(this)"/>
-      </div>
-      <div class="pay-row">
-        <div class="pay-field">
-          <label class="pay-label">Expiry</label>
-          <input type="text" class="pay-input" placeholder="MM / YY" maxlength="7" oninput="formatExpiry(this)"/>
+      <div style="border:1px solid var(--line); padding:20px; margin-bottom:24px; background:var(--paper);">
+        <div class="pay-label" style="margin-bottom:12px;">Order Summary</div>
+        <div style="display:flex; justify-content:space-between; font-family:var(--mono); font-size:13px;">
+          <span id="orderPlanName">PlanIQ Pro — Starter</span>
+          <span id="orderPlanPrice" style="font-weight:600; color:var(--amber);">$39</span>
         </div>
-        <div class="pay-field">
-          <label class="pay-label">CVC</label>
-          <input type="text" class="pay-input" placeholder="123" maxlength="4"/>
-        </div>
+        <div style="font-family:var(--mono); font-size:10px; opacity:0.45; margin-top:6px;" id="orderPlanDesc">One-time · 2 uploads · 30 pages each</div>
       </div>
-      <button class="pay-submit" onclick="completePurchase()">🔒 Complete Purchase</button>
-      <div class="pay-secure">256-bit SSL · Powered by Stripe · Cancel anytime</div>
+
+      <p style="font-family:var(--mono); font-size:12px; line-height:1.8; opacity:0.6; margin-bottom:24px;">
+        You'll be taken to Stripe's secure checkout to complete payment. After purchase, you'll receive an access link by email and be returned here automatically.
+      </p>
+
+      <button class="pay-submit" id="stripeRedirectBtn" onclick="redirectToStripe()">🔒 Continue to Secure Checkout →</button>
+      <div class="pay-secure">256-bit SSL · Powered by Stripe · Instant access after payment</div>
       <div class="pay-back" onclick="showSection('sec-plans')">← Back to plans</div>
     </div>
   </div>
@@ -562,8 +560,9 @@ body::before {
       </div>
       <div class="export-actions">
         <button class="export-btn" onclick="exportCSV()">↓ Download CSV</button>
-        <button class="export-btn procore" onclick="exportProcoreCSV()">↓ </button>
-        <button class="export-btn primary" onclick="showSection('sec-upload')">+ New Upload</button>
+        <button class="export-btn procore" onclick="exportProcoreCSV()">↓ Procore CSV</button>
+        <button class="export-btn primary" onclick="STATE.plan==='demo' ? showSection('sec-plans') : showSection('sec-upload')">+ New Upload</button>
+        <button class="export-btn" onclick="showSection('sec-plans')" style="opacity:0.6;">← Plans</button>
       </div>
     </div>
   </div>
@@ -597,48 +596,124 @@ function showSection(id) {
 }
 
 /* ═══════════════════════════════════════════
+   STRIPE RETURN HANDLER
+   After purchase, Stripe redirects back with ?paid=starter or ?paid=pro
+   This auto-unlocks the upload section for the user.
+═══════════════════════════════════════════ */
+(function handleStripeReturn() {
+  const params = new URLSearchParams(window.location.search);
+  const paid = params.get('paid'); // 'starter' or 'pro'
+  if (paid && (paid === 'starter' || paid === 'pro')) {
+    const label = paid === 'starter' ? 'Starter' : 'Professional';
+    STATE.plan       = paid;
+    STATE.planLabel  = label;
+    STATE.uploadsMax = paid === 'starter' ? 2 : 999;
+    STATE.pagesMax   = paid === 'starter' ? 30 : 35;
+    document.getElementById('planLabel').textContent = label;
+    document.getElementById('uploadsMax').textContent = paid === 'starter' ? STATE.uploadsMax : '∞';
+    updateQuota();
+    showSection('sec-upload');
+    // Clean URL
+    window.history.replaceState({}, '', window.location.pathname);
+  }
+})();
+
+/* ═══════════════════════════════════════════
    PLAN SELECTION
 ═══════════════════════════════════════════ */
+const STRIPE_LINKS = {
+  starter: 'https://buy.stripe.com/00w4gz7hkbSM4IydDbc7u00',
+  pro:     'https://buy.stripe.com/6oUcN50SW6ys7UK7eNc7u01'
+};
+
 function selectPlan(plan, label) {
   STATE.plan = plan;
   STATE.planLabel = label;
-  // Set upload limits and page limits per plan
   STATE.uploadsMax  = plan === 'starter' ? 2 : 999;
   STATE.pagesMax    = plan === 'starter' ? 30 : 35;
   document.getElementById('planLabel').textContent = label;
-  const subText = {
-    starter: 'Starter Plan — $39 one-time',
-    pro:     'Professional Plan — $149/month'
-  };
-  document.getElementById('payFormSub').textContent = subText[plan];
+
+  // Update payment screen summary
+  const planNames  = { starter: 'PlanIQ Pro — Starter', pro: 'PlanIQ Pro — Professional' };
+  const planPrices = { starter: '$39', pro: '$149/mo' };
+  const planDescs  = { starter: 'One-time · 2 uploads · 30 pages each', pro: 'Monthly · Unlimited uploads · 35 pages each' };
+  document.getElementById('payFormTitle').textContent = 'Complete Your Order';
+  document.getElementById('payFormSub').textContent   = plan === 'starter' ? 'Starter Plan — $39 one-time' : 'Professional Plan — $149/month';
+  document.getElementById('orderPlanName').textContent  = planNames[plan];
+  document.getElementById('orderPlanPrice').textContent = planPrices[plan];
+  document.getElementById('orderPlanDesc').textContent  = planDescs[plan];
   showSection('sec-payment');
 }
 
+function redirectToStripe() {
+  const btn = document.getElementById('stripeRedirectBtn');
+  btn.textContent = 'Redirecting to Stripe...';
+  btn.style.opacity = '0.6';
+  btn.disabled = true;
+  setTimeout(() => {
+    window.location.href = STRIPE_LINKS[STATE.plan] || STRIPE_LINKS.starter;
+  }, 600);
+}
+
 /* ═══════════════════════════════════════════
-   PAYMENT (DEMO — no real charge)
+   FREE DEMO MODE
+═══════════════════════════════════════════ */
+function runDemo() {
+  STATE.plan = 'demo';
+  STATE.planLabel = 'Demo';
+  STATE.rfis = [];
+  document.getElementById('planLabel').textContent = 'Demo';
+  showSection('sec-results');
+
+  const log = document.getElementById('streamLog');
+  const logLine = (text, cls='') => {
+    const cursor = log.querySelector('.cursor');
+    const line = document.createElement('div');
+    line.className = 'log-line ' + cls;
+    line.textContent = text;
+    log.insertBefore(line, cursor);
+    log.scrollTop = log.scrollHeight;
+  };
+
+  (async () => {
+    logLine('// PlanIQ Pro — Demo Mode', 'highlight');
+    await delay(400);
+    logLine('// Loading sample commercial office drawing set...');
+    await delay(500);
+    logLine('// 14 sheets detected: ARCH · STRUCT · MEP · CIVIL');
+    await delay(500);
+    logLine('// Cross-referencing disciplines...', 'highlight');
+    await delay(600);
+    logLine('// Checking IBC 2021, ADA standards, NFPA 101...');
+    await delay(500);
+    logLine('// Flagging drawing conflicts...', 'highlight');
+    await delay(700);
+    logLine('// Scoring by cost and schedule impact...');
+    await delay(500);
+    logLine('// Formatting RFIs to AIA standard...');
+    await delay(600);
+    const demoRFIs = generateDemoRFIs();
+    STATE.rfis = demoRFIs;
+    logLine(`// ✓ ${demoRFIs.length} RFIs generated`, 'success');
+    await delay(300);
+    document.getElementById('analysisTitle').innerHTML = 'DEMO RFIS<br>READY';
+    document.getElementById('analysisSub').textContent = 'Sample RFIs from a commercial office project — purchase a plan to analyze your own drawings';
+    document.getElementById('statusText').textContent = 'Demo Complete';
+    document.getElementById('statusText').style.color = '#7aab6e';
+    document.querySelector('.pulse-dot').style.background = '#7aab6e';
+    document.querySelector('.pulse-dot').style.animationPlayState = 'paused';
+    renderRFIs(demoRFIs);
+    document.getElementById('exportCount').textContent = demoRFIs.length + ' RFIs';
+    document.getElementById('pushCount').textContent = demoRFIs.length;
+    document.getElementById('exportBar').style.display = 'flex';
+  })();
+}
+
+/* ═══════════════════════════════════════════
+   PAYMENT (legacy — kept for compatibility)
 ═══════════════════════════════════════════ */
 function completePurchase() {
-  const name = document.getElementById('payName').value.trim();
-  const email = document.getElementById('payEmail').value.trim();
-  if (!name || !email) { alert('Please enter your name and email.'); return; }
-
-  // Update quota display
-  document.getElementById('uploadsMax').textContent =
-    STATE.plan === 'starter' ? STATE.uploadsMax : '∞';
-  updateQuota();
-  showSection('sec-upload');
-}
-
-/* ═══════════════════════════════════════════
-   CARD INPUT FORMATTING
-═══════════════════════════════════════════ */
-function formatCard(el) {
-  el.value = el.value.replace(/\D/g,'').replace(/(.{4})/g,'$1 ').trim();
-}
-function formatExpiry(el) {
-  let v = el.value.replace(/\D/g,'');
-  if (v.length >= 2) v = v.slice(0,2) + ' / ' + v.slice(2,4);
-  el.value = v;
+  redirectToStripe();
 }
 
 /* ═══════════════════════════════════════════
