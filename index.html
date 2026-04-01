@@ -677,7 +677,7 @@ body::before {
    SUPABASE AUTH SYSTEM
 ═══════════════════════════════════════════ */
 const SUPABASE_URL  = 'https://djnelbyyzwkvxopsrnuy.supabase.co';
-let supabase = null;
+let sbClient = null;
 let AUTH_MODE = 'login';
 let CURRENT_USER = null;
 
@@ -688,7 +688,7 @@ async function initSupabase() {
     if (!res.ok) throw new Error('Could not load auth config');
     const { anonKey } = await res.json();
     if (window.supabase && anonKey) {
-      supabase = window.supabase.createClient(SUPABASE_URL, anonKey);
+      sbClient = window.supabase.createClient(SUPABASE_URL, anonKey);
     }
   } catch(e) {
     console.warn('Could not load Supabase config:', e);
@@ -698,9 +698,9 @@ async function initSupabase() {
 // ── Check session on page load ──
 async function initAuth() {
   await initSupabase();
-  if (!supabase) return;
+  if (!sbClient) return;
   try {
-    const { data: { session } } = await supabase.auth.getSession();
+    const { data: { session } } = await sbClient.auth.getSession();
     if (session?.user) {
       await handleLoggedIn(session.user);
     }
@@ -709,7 +709,7 @@ async function initAuth() {
   }
 
   // Listen for auth changes
-  supabase.auth.onAuthStateChange(async (event, session) => {
+  sbClient.auth.onAuthStateChange(async (event, session) => {
     if (event === 'SIGNED_IN' && session?.user) {
       await handleLoggedIn(session.user);
     } else if (event === 'SIGNED_OUT') {
@@ -725,7 +725,7 @@ async function handleLoggedIn(user) {
   // Get their profile from database
   let profile = null;
   try {
-    const { data } = await supabase
+    const { data } = await sbClient
       .from('profiles')
       .select('*')
       .eq('id', user.id)
@@ -800,8 +800,8 @@ function handleLoggedOut() {
 }
 
 async function logOut() {
-  if (!supabase) return;
-  await supabase.auth.signOut();
+  if (!sbClient) return;
+  await sbClient.auth.signOut();
 }
 
 // ── Auth Modal ──
@@ -844,7 +844,7 @@ function updateAuthUI() {
 }
 
 async function submitAuth() {
-  if (!supabase) { alert('Auth system not loaded. Please refresh.'); return; }
+  if (!sbClient) { alert('Auth system not loaded. Please refresh.'); return; }
   const email    = document.getElementById('authEmail').value.trim();
   const password = document.getElementById('authPassword').value;
   const confirm  = document.getElementById('authPasswordConfirm').value;
@@ -862,9 +862,9 @@ async function submitAuth() {
   try {
     let result;
     if (AUTH_MODE === 'login') {
-      result = await supabase.auth.signInWithPassword({ email, password });
+      result = await sbClient.auth.signInWithPassword({ email, password });
     } else {
-      result = await supabase.auth.signUp({ email, password });
+      result = await sbClient.auth.signUp({ email, password });
     }
 
     if (result.error) {
