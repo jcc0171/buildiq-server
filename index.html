@@ -348,7 +348,7 @@ body::before {
   align-items: center; justify-content: center;
   backdrop-filter: blur(4px);
 }
-.auth-overlay.open { display: flex; animation: fadeUp 0.25s ease; }
+.auth-overlay.open { display: flex !important; animation: fadeUp 0.25s ease; }
 .auth-box {
   background: var(--paper); border: 1px solid var(--line);
   padding: 48px; max-width: 440px; width: 90%;
@@ -820,7 +820,11 @@ function openAuth(mode = 'login') {
   AUTH_MODE = mode;
   updateAuthUI();
   document.getElementById('authOverlay').classList.add('open');
-  setTimeout(() => document.getElementById('authEmail').focus(), 100);
+  document.getElementById('authError').textContent = '';
+  setTimeout(() => {
+    const emailEl = document.getElementById('authEmail');
+    if (emailEl) emailEl.focus();
+  }, 100);
 }
 
 function closeAuth() {
