@@ -677,19 +677,8 @@ body::before {
    SUPABASE AUTH SYSTEM
 ═══════════════════════════════════════════ */
 const SUPABASE_URL  = 'https://djnelbyyzwkvxopsrnuy.supabase.co';
-// The anon key is safe to use in browser code - it's a public key
-const SUPABASE_ANON = document.querySelector('meta[name="sb-anon"]')?.content || '';
-
-let supabase;
-try {
-  if (window.supabase && SUPABASE_ANON) {
-    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
-  }
-} catch(e) {
-  console.warn('Supabase init error:', e);
-}
-
-let AUTH_MODE = 'login'; // 'login' or 'signup'
+let supabase = null;
+let AUTH_MODE = 'login';
 let CURRENT_USER = null;
 
 // ── Initialize Supabase with key from server ──
@@ -896,12 +885,16 @@ async function submitAuth() {
 }
 
 // Close modal on overlay click
-document.getElementById('authOverlay').addEventListener('click', function(e) {
-  if (e.target === this) closeAuth();
-});
-
 // Initialize auth when page loads
-window.addEventListener('DOMContentLoaded', initAuth);
+window.addEventListener('DOMContentLoaded', function() {
+  const overlay = document.getElementById('authOverlay');
+  if (overlay) {
+    overlay.addEventListener('click', function(e) {
+      if (e.target === this) closeAuth();
+    });
+  }
+  initAuth();
+});
 
 /* ═══════════════════════════════════════════
    APP STATE
