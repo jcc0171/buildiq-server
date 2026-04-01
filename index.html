@@ -9,6 +9,8 @@
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
 <!-- PDF.js — reads PDF files in the browser, no server needed -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<!-- Supabase — authentication and database -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 /* ═══════════════════════════════════════════
    DESIGN SYSTEM
@@ -339,6 +341,60 @@ body::before {
 .hidden { display: none !important; }
 .mt-40 { margin-top: 40px; }
 
+/* ── AUTH MODAL ── */
+.auth-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(13,13,13,0.75); z-index: 300;
+  align-items: center; justify-content: center;
+  backdrop-filter: blur(4px);
+}
+.auth-overlay.open { display: flex; animation: fadeUp 0.25s ease; }
+.auth-box {
+  background: var(--paper); border: 1px solid var(--line);
+  padding: 48px; max-width: 440px; width: 90%;
+  box-shadow: 20px 20px 0 rgba(13,13,13,0.12); position: relative;
+}
+.auth-close {
+  position: absolute; top: 16px; right: 20px;
+  font-family: var(--mono); font-size: 18px; cursor: pointer;
+  opacity: 0.4; transition: opacity 0.2s; background: none; border: none;
+}
+.auth-close:hover { opacity: 1; }
+.auth-logo { font-family: var(--disp); font-size: 22px; letter-spacing: 1px; margin-bottom: 4px; }
+.auth-title { font-family: var(--disp); font-size: 36px; letter-spacing: 0.5px; margin-bottom: 6px; }
+.auth-sub { font-family: var(--mono); font-size: 11px; opacity: 0.5; margin-bottom: 28px; letter-spacing: 0.5px; line-height: 1.7; }
+.auth-field { margin-bottom: 14px; }
+.auth-label { font-family: var(--mono); font-size: 10px; letter-spacing: 1.5px; text-transform: uppercase; opacity: 0.55; margin-bottom: 6px; display: block; }
+.auth-input {
+  width: 100%; font-family: var(--mono); font-size: 14px;
+  padding: 12px 16px; background: white; border: 1px solid var(--line);
+  color: var(--ink); outline: none; transition: border-color 0.2s;
+}
+.auth-input:focus { border-color: var(--amber); }
+.auth-submit {
+  width: 100%; margin-top: 8px;
+  font-family: var(--mono); font-size: 13px; letter-spacing: 1px; text-transform: uppercase;
+  background: var(--ink); color: var(--paper); border: none; padding: 16px;
+  cursor: pointer; transition: all 0.2s;
+}
+.auth-submit:hover { background: var(--amber); }
+.auth-submit:disabled { opacity: 0.5; cursor: not-allowed; }
+.auth-switch { font-family: var(--mono); font-size: 11px; opacity: 0.5; text-align: center; margin-top: 16px; cursor: pointer; }
+.auth-switch:hover { opacity: 1; }
+.auth-switch span { text-decoration: underline; }
+.auth-error { font-family: var(--mono); font-size: 11px; color: var(--rust); margin-top: 8px; text-align: center; min-height: 16px; }
+.auth-success { font-family: var(--mono); font-size: 11px; color: var(--sage); margin-top: 8px; text-align: center; }
+
+/* ── LOGIN BUTTON IN TOPBAR ── */
+.login-btn {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 1px; text-transform: uppercase;
+  border: 1px solid var(--line); background: transparent; color: var(--ink);
+  padding: 7px 18px; cursor: pointer; transition: all 0.2s;
+}
+.login-btn:hover { background: var(--ink); color: var(--paper); }
+.login-btn.logged-in { border-color: var(--sage); color: var(--sage); }
+.topbar-right { display: flex; align-items: center; gap: 12px; }
+
 /* ── RESPONSIVE ── */
 @media (max-width: 640px) {
   .app-shell { padding: 0 16px 60px; }
@@ -353,8 +409,47 @@ body::before {
 
   <!-- TOP BAR -->
   <div class="topbar">
-    <div class="logo"><div class="logo-dot"></div>PLANIQ PRO</div>
-    <div class="plan-pill" id="planPill">Plan: <span id="planLabel">—</span></div>
+    <div class="logo" style="cursor:pointer" onclick="showSection('sec-plans')"><div class="logo-dot"></div>PLANIQ PRO</div>
+    <div class="topbar-right">
+      <div class="plan-pill" id="planPill" style="display:none">Plan: <span id="planLabel">—</span></div>
+      <div id="userEmailDisplay" style="font-family:var(--mono);font-size:11px;opacity:0.5;display:none;"></div>
+      <button class="login-btn" id="authBtn" onclick="openAuth()">Log In</button>
+      <button class="login-btn logged-in" id="logoutBtn" style="display:none" onclick="logOut()">Log Out</button>
+    </div>
+  </div>
+
+  <!-- ═══════════════════════════════════════
+       AUTH MODAL
+  ═══════════════════════════════════════ -->
+  <div class="auth-overlay" id="authOverlay">
+    <div class="auth-box">
+      <button class="auth-close" onclick="closeAuth()">✕</button>
+      <div class="auth-logo">PLANIQ PRO</div>
+      <div class="auth-title" id="authTitle">WELCOME<br>BACK</div>
+      <div class="auth-sub" id="authSub">Log in to access your drawings and RFIs</div>
+
+      <div class="auth-field">
+        <label class="auth-label">Email Address</label>
+        <input type="email" class="auth-input" id="authEmail" placeholder="you@yourcompany.com"/>
+      </div>
+      <div class="auth-field" id="authPasswordField">
+        <label class="auth-label">Password</label>
+        <input type="password" class="auth-input" id="authPassword" placeholder="••••••••" onkeydown="if(event.key==='Enter')submitAuth()"/>
+      </div>
+      <div class="auth-field" id="authPasswordConfirmField" style="display:none">
+        <label class="auth-label">Confirm Password</label>
+        <input type="password" class="auth-input" id="authPasswordConfirm" placeholder="••••••••"/>
+      </div>
+
+      <div class="auth-error" id="authError"></div>
+      <button class="auth-submit" id="authSubmitBtn" onclick="submitAuth()">Log In →</button>
+      <div class="auth-switch" id="authSwitch" onclick="toggleAuthMode()">
+        Don't have an account? <span>Sign up free</span>
+      </div>
+      <div style="font-family:var(--mono);font-size:10px;opacity:0.35;text-align:center;margin-top:12px;">
+        🔒 Secured by Supabase · Your data is encrypted
+      </div>
+    </div>
   </div>
 
   <!-- ═══════════════════════════════════════
@@ -579,8 +674,231 @@ body::before {
 
 <script>
 /* ═══════════════════════════════════════════
-   APP STATE
+   SUPABASE AUTH SYSTEM
 ═══════════════════════════════════════════ */
+const SUPABASE_URL  = 'https://djnelbyyzwkvxopsrnuy.supabase.co';
+// The anon key is safe to use in browser code - it's a public key
+const SUPABASE_ANON = document.querySelector('meta[name="sb-anon"]')?.content || '';
+
+let supabase;
+try {
+  if (window.supabase && SUPABASE_ANON) {
+    supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON);
+  }
+} catch(e) {
+  console.warn('Supabase init error:', e);
+}
+
+let AUTH_MODE = 'login'; // 'login' or 'signup'
+let CURRENT_USER = null;
+
+// ── Initialize Supabase with key from server ──
+async function initSupabase() {
+  try {
+    const res = await fetch('/api/auth');
+    if (!res.ok) throw new Error('Could not load auth config');
+    const { anonKey } = await res.json();
+    if (window.supabase && anonKey) {
+      supabase = window.supabase.createClient(SUPABASE_URL, anonKey);
+    }
+  } catch(e) {
+    console.warn('Could not load Supabase config:', e);
+  }
+}
+
+// ── Check session on page load ──
+async function initAuth() {
+  await initSupabase();
+  if (!supabase) return;
+  try {
+    const { data: { session } } = await supabase.auth.getSession();
+    if (session?.user) {
+      await handleLoggedIn(session.user);
+    }
+  } catch(e) {
+    console.warn('Auth init error:', e);
+  }
+
+  // Listen for auth changes
+  supabase.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_IN' && session?.user) {
+      await handleLoggedIn(session.user);
+    } else if (event === 'SIGNED_OUT') {
+      handleLoggedOut();
+    }
+  });
+}
+
+async function handleLoggedIn(user) {
+  CURRENT_USER = user;
+  closeAuth();
+
+  // Get their profile from database
+  let profile = null;
+  try {
+    const { data } = await supabase
+      .from('profiles')
+      .select('*')
+      .eq('id', user.id)
+      .single();
+    profile = data;
+  } catch(e) {}
+
+  // Update UI
+  document.getElementById('authBtn').style.display = 'none';
+  document.getElementById('logoutBtn').style.display = 'block';
+  document.getElementById('userEmailDisplay').style.display = 'block';
+  document.getElementById('userEmailDisplay').textContent = user.email;
+
+  // Set plan from profile
+  if (profile?.plan && profile.plan !== 'none') {
+    STATE.plan = profile.plan;
+    STATE.planLabel = profile.plan === 'pro' ? 'Professional' : 'Starter';
+    STATE.uploadsMax = profile.plan === 'pro' ? 999 : 2;
+    STATE.pagesMax   = profile.plan === 'pro' ? 35 : 30;
+    STATE.uploadsUsed = profile.uploads_used || 0;
+    document.getElementById('planLabel').textContent = STATE.planLabel;
+    document.getElementById('planPill').style.display = 'flex';
+    updateQuota();
+    showSection('sec-upload');
+  } else {
+    // Check for pending plan from Stripe return or plan selection
+    const pendingPlan = sessionStorage.getItem('pendingPlan');
+    if (pendingPlan) {
+      sessionStorage.removeItem('pendingPlan');
+      // They just signed up and chose a plan — show payment screen
+      showPaymentScreen(pendingPlan, pendingPlan === 'pro' ? 'Professional' : 'Starter');
+    } else {
+      // Logged in but no plan — show plans page
+      showSection('sec-plans');
+    }
+  }
+}
+
+async function activatePlan(userId, plan) {
+  try {
+    // Use server API to activate plan (uses service key securely)
+    await fetch('/api/auth', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ userId, plan })
+    });
+  } catch(e) {
+    console.warn('Plan activation error:', e);
+  }
+
+  STATE.plan = plan;
+  STATE.planLabel = plan === 'pro' ? 'Professional' : 'Starter';
+  STATE.uploadsMax = uploadsMax;
+  STATE.pagesMax   = plan === 'pro' ? 35 : 30;
+  STATE.uploadsUsed = 0;
+  document.getElementById('planLabel').textContent = STATE.planLabel;
+  document.getElementById('planPill').style.display = 'flex';
+  updateQuota();
+  window.history.replaceState({}, '', window.location.pathname);
+  showSection('sec-upload');
+}
+
+function handleLoggedOut() {
+  CURRENT_USER = null;
+  STATE.plan = null;
+  STATE.planLabel = '';
+  document.getElementById('authBtn').style.display = 'block';
+  document.getElementById('logoutBtn').style.display = 'none';
+  document.getElementById('userEmailDisplay').style.display = 'none';
+  document.getElementById('planPill').style.display = 'none';
+  showSection('sec-plans');
+}
+
+async function logOut() {
+  if (!supabase) return;
+  await supabase.auth.signOut();
+}
+
+// ── Auth Modal ──
+function openAuth(mode = 'login') {
+  AUTH_MODE = mode;
+  updateAuthUI();
+  document.getElementById('authOverlay').classList.add('open');
+  setTimeout(() => document.getElementById('authEmail').focus(), 100);
+}
+
+function closeAuth() {
+  document.getElementById('authOverlay').classList.remove('open');
+  document.getElementById('authError').textContent = '';
+  document.getElementById('authEmail').value = '';
+  document.getElementById('authPassword').value = '';
+  document.getElementById('authPasswordConfirm').value = '';
+}
+
+function toggleAuthMode() {
+  AUTH_MODE = AUTH_MODE === 'login' ? 'signup' : 'login';
+  updateAuthUI();
+}
+
+function updateAuthUI() {
+  const isLogin = AUTH_MODE === 'login';
+  document.getElementById('authTitle').innerHTML = isLogin ? 'WELCOME<br>BACK' : 'CREATE<br>ACCOUNT';
+  document.getElementById('authSub').textContent = isLogin
+    ? 'Log in to access your drawings and RFIs'
+    : 'Create your free account to get started';
+  document.getElementById('authSubmitBtn').textContent = isLogin ? 'Log In →' : 'Create Account →';
+  document.getElementById('authSwitch').innerHTML = isLogin
+    ? 'Don\'t have an account? <span>Sign up free</span>'
+    : 'Already have an account? <span>Log in</span>';
+  document.getElementById('authPasswordConfirmField').style.display = isLogin ? 'none' : 'block';
+  document.getElementById('authError').textContent = '';
+}
+
+async function submitAuth() {
+  if (!supabase) { alert('Auth system not loaded. Please refresh.'); return; }
+  const email    = document.getElementById('authEmail').value.trim();
+  const password = document.getElementById('authPassword').value;
+  const confirm  = document.getElementById('authPasswordConfirm').value;
+  const errEl    = document.getElementById('authError');
+  const btn      = document.getElementById('authSubmitBtn');
+
+  if (!email || !password) { errEl.textContent = 'Please enter your email and password.'; return; }
+  if (AUTH_MODE === 'signup' && password !== confirm) { errEl.textContent = 'Passwords do not match.'; return; }
+  if (AUTH_MODE === 'signup' && password.length < 6) { errEl.textContent = 'Password must be at least 6 characters.'; return; }
+
+  btn.disabled = true;
+  btn.textContent = AUTH_MODE === 'login' ? 'Logging in...' : 'Creating account...';
+  errEl.textContent = '';
+
+  try {
+    let result;
+    if (AUTH_MODE === 'login') {
+      result = await supabase.auth.signInWithPassword({ email, password });
+    } else {
+      result = await supabase.auth.signUp({ email, password });
+    }
+
+    if (result.error) {
+      errEl.textContent = result.error.message;
+      btn.disabled = false;
+      btn.textContent = AUTH_MODE === 'login' ? 'Log In →' : 'Create Account →';
+    } else if (AUTH_MODE === 'signup') {
+      errEl.style.color = 'var(--sage)';
+      errEl.textContent = '✓ Account created! Check your email to confirm.';
+      btn.disabled = false;
+      btn.textContent = 'Create Account →';
+    }
+  } catch(e) {
+    errEl.textContent = 'Something went wrong. Please try again.';
+    btn.disabled = false;
+    btn.textContent = AUTH_MODE === 'login' ? 'Log In →' : 'Create Account →';
+  }
+}
+
+// Close modal on overlay click
+document.getElementById('authOverlay').addEventListener('click', function(e) {
+  if (e.target === this) closeAuth();
+});
+
+// Initialize auth when page loads
+window.addEventListener('DOMContentLoaded', initAuth);
+</script>
 const STATE = {
   plan: null,
   planLabel: '',
@@ -605,22 +923,14 @@ function showSection(id) {
 /* ═══════════════════════════════════════════
    STRIPE RETURN HANDLER
    After purchase, Stripe redirects back with ?paid=starter or ?paid=pro
-   This auto-unlocks the upload section for the user.
+   If user is logged in, activate their plan. If not, open signup first.
 ═══════════════════════════════════════════ */
 (function handleStripeReturn() {
   const params = new URLSearchParams(window.location.search);
-  const paid = params.get('paid'); // 'starter' or 'pro'
+  const paid = params.get('paid');
   if (paid && (paid === 'starter' || paid === 'pro')) {
-    const label = paid === 'starter' ? 'Starter' : 'Professional';
-    STATE.plan       = paid;
-    STATE.planLabel  = label;
-    STATE.uploadsMax = paid === 'starter' ? 2 : 999;
-    STATE.pagesMax   = paid === 'starter' ? 30 : 35;
-    document.getElementById('planLabel').textContent = label;
-    document.getElementById('uploadsMax').textContent = paid === 'starter' ? STATE.uploadsMax : '∞';
-    updateQuota();
-    showSection('sec-upload');
-    // Clean URL
+    // Store the plan in sessionStorage so we can activate after login/signup
+    sessionStorage.setItem('pendingPlan', paid);
     window.history.replaceState({}, '', window.location.pathname);
   }
 })();
@@ -636,11 +946,27 @@ const STRIPE_LINKS = {
 function selectPlan(plan, label) {
   STATE.plan = plan;
   STATE.planLabel = label;
-  STATE.uploadsMax  = plan === 'starter' ? 2 : 999;
-  STATE.pagesMax    = plan === 'starter' ? 30 : 35;
-  document.getElementById('planLabel').textContent = label;
+  STATE.uploadsMax = plan === 'starter' ? 2 : 999;
+  STATE.pagesMax   = plan === 'starter' ? 30 : 35;
 
-  // Update payment screen summary
+  // Store chosen plan
+  sessionStorage.setItem('pendingPlan', plan);
+
+  // If already logged in, go straight to Stripe
+  if (CURRENT_USER) {
+    showPaymentScreen(plan, label);
+  } else {
+    // Open signup modal first — they need an account before paying
+    AUTH_MODE = 'signup';
+    updateAuthUI();
+    document.getElementById('authSub').textContent =
+      'Create your free account, then complete your purchase.';
+    document.getElementById('authOverlay').classList.add('open');
+    setTimeout(() => document.getElementById('authEmail').focus(), 100);
+  }
+}
+
+function showPaymentScreen(plan, label) {
   const planNames  = { starter: 'PlanIQ Pro — Starter', pro: 'PlanIQ Pro — Professional' };
   const planPrices = { starter: '$39', pro: '$149/mo' };
   const planDescs  = { starter: 'One-time · 2 uploads · 30 pages each', pro: 'Monthly · Unlimited uploads · 35 pages each' };
@@ -653,12 +979,13 @@ function selectPlan(plan, label) {
 }
 
 function redirectToStripe() {
+  const plan = sessionStorage.getItem('pendingPlan') || STATE.plan || 'starter';
   const btn = document.getElementById('stripeRedirectBtn');
   btn.textContent = 'Redirecting to Stripe...';
   btn.style.opacity = '0.6';
   btn.disabled = true;
   setTimeout(() => {
-    window.location.href = STRIPE_LINKS[STATE.plan] || STRIPE_LINKS.starter;
+    window.location.href = STRIPE_LINKS[plan] || STRIPE_LINKS.starter;
   }, 600);
 }
 
