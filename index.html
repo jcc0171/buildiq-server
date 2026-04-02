@@ -1738,4 +1738,14 @@ function generateDemoRFIs() {
     { id:'RFI-009', title:'Sprinkler head clearance below structural members', priority:'medium', discipline:'Fire Protection', location:'Parking Level P1, Sheet FP-101', description:'Upright sprinkler heads at Parking Level P1 are shown at 14\'-6" AFF per Sheet FP-101. Structural beams at this level are at 13\'-8" AFF. Heads will be obstructed. Confirm head type change to pendent or provide revised layout.', spec_ref:'NFPA 13 / Sheet FP-101', cost_impact:'Low (<$5K)', schedule_impact:'Low (1-3 days)' },
     { id:'RFI-010', title:'Storefront framing — anchor bolt pattern not specified', priority:'low', discipline:'Architectural', location:'Main Lobby Entry, Sheet A-800', description:'Aluminum storefront system specified in Section 08 44 13 but anchor bolt pattern, embedment depth, and edge distances are not detailed on Sheet A-800 or structural drawings. Manufacturer\'s shop drawing approval required before fabrication.', spec_ref:'Section 08 44 13 / Sheet A-800', cost_impact:'Low (<$5K)', schedule_impact:'None' },
     { id:'RFI-011', title:'Mechanical room access door — fire rating required', priority:'medium', discipline:'MEP', location:'Mechanical Room 107, Sheet A-107', description:'Mechanical room 107 is separated from occupied space. Per IBC Table 508.4, the separation requires a 1-hour fire rating. Door shown on Sheet A-107 is not specified as a rated assembly. Confirm door and frame fire rating.', spec_ref:'IBC Table 508.4 / Sheet A-107', cost_impact:'Low (<$5K)', schedule_impact:'None' },
-    { id:'RFI-012', title:'Exterior paving slope — does not meet ADA cross-slope', priority:'low', discipline:'Civil', location:'Main Entry Plaza, Sheet C-501', description:'Entry plaza paving shown at 2.5% cross-slope on Sheet C-501. ADA requires maximum 2.0% cross-slope on accessible routes. Revise grading plan for accessible path from parkin
+    { id:'RFI-012', title:'Exterior paving slope — does not meet ADA cross-slope', priority:'low', discipline:'Civil', location:'Main Entry Plaza, Sheet C-501', description:'Entry plaza paving shown at 2.5% cross-slope on Sheet C-501. ADA requires maximum 2.0% cross-slope on accessible routes. Revise grading plan for accessible path from parking to building entry.', spec_ref:'ADA 402.3 / Sheet C-501', cost_impact:'Low (<$5K)', schedule_impact:'None' }
+  ];
+}
+
+/* ═══════════════════════════════════════════
+   UTILITY
+═══════════════════════════════════════════ */
+function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
+</script>
+</body>
+</html>
