@@ -15,7 +15,7 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { prompt, messages, hasImages } = req.body || {};
+    const { prompt, messages } = req.body || {};
 
     if (!prompt && !messages) {
       res.status(400).json({ error: 'No prompt or messages provided' });
@@ -28,18 +28,9 @@ export default async function handler(req, res) {
       return;
     }
 
-    // Build the message content
-    // If we have structured messages with images, use those
+    // Use structured messages if provided (includes PDFs)
     // Otherwise fall back to simple text prompt
-    let messageContent;
-
-    if (messages && messages.length > 0 && hasImages) {
-      // Visual analysis mode — use the full message array with images
-      messageContent = messages;
-    } else {
-      // Text only mode — simple prompt
-      messageContent = [{ role: 'user', content: prompt }];
-    }
+    const messageContent = messages || [{ role: 'user', content: prompt }];
 
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -49,7 +40,7 @@ export default async function handler(req, res) {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-opus-4-5-20251101', // Use most capable model for best RFI quality
+        model: 'claude-sonnet-4-20250514',
         max_tokens: 4000,
         messages: messageContent
       })
