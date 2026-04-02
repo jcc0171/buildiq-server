@@ -1274,16 +1274,17 @@ async function processFiles(newFiles) {
         else if (pt.includes('fire') || pt.includes('sprinkler') || pt.includes('suppression')) discipline = 'Fire Protection';
 
         // Render page as image for visual analysis
+        // Use lower scale to keep payload size manageable
         let imageBase64 = null;
         try {
-          const viewport = page.getViewport({ scale: 1.5 }); // Higher scale = better detail
+          const viewport = page.getViewport({ scale: 0.8 }); // Reduced scale for smaller payload
           const canvas = document.createElement('canvas');
           canvas.width = viewport.width;
           canvas.height = viewport.height;
           const ctx = canvas.getContext('2d');
           await page.render({ canvasContext: ctx, viewport }).promise;
-          // Convert to base64 JPEG (smaller than PNG, good enough for analysis)
-          imageBase64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+          // Use lower quality JPEG to keep size small
+          imageBase64 = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
         } catch(imgErr) {
           console.warn(`Could not render page ${i} as image:`, imgErr);
         }
@@ -1305,12 +1306,19 @@ async function processFiles(newFiles) {
       pageCount = 1;
     }
 
+    // Store raw PDF as base64 for direct Claude PDF analysis
+    // This gives Claude the same view as uploading directly in chat
+    const pdfBase64 = btoa(
+      new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
+    );
+
     const fileObj = {
       name: file.name,
       size: (file.size / 1024 / 1024).toFixed(1) + ' MB',
       pages: pageCount,
       text: extractedText,
-      pageData, // Store structured page data
+      pageData,
+      pdfBase64, // Raw PDF for direct Claude analysis
       ok: pageCount <= STATE.pagesMax
     };
 
@@ -1513,29 +1521,26 @@ RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER, NO 
     logLine('// Sending to PlanIQ Pro secure AI server...', 'highlight');
     await delay(300);
 
-    // Build message content — text prompt + page images for visual analysis
+    // Build message content — send PDFs directly to Claude
+    // This gives Claude the same full visual access as uploading in Claude chat
     const messageContent = [];
+    const validFiles = STATE.files.filter(f => f.ok && f.pdfBase64);
 
-    // Add page images first (Claude reads images before text for best results)
-    if (hasImages) {
-      logLine(`// Uploading ${pageImages.length} drawing pages for visual analysis...`, 'highlight');
-      // Send up to 20 pages as images to stay within token limits
-      const imagesToSend = pageImages.slice(0, 20);
-      for (const img of imagesToSend) {
+    if (validFiles.length > 0) {
+      logLine(`// Sending ${validFiles.length} PDF(s) directly to AI — full visual analysis...`, 'highlight');
+      await delay(300);
+      for (const f of validFiles) {
         messageContent.push({
-          type: 'text',
-          text: `--- Page ${img.pageNum} | Sheet: ${img.sheetNum} | Discipline: ${img.discipline} | File: ${img.fileName} ---`
-        });
-        messageContent.push({
-          type: 'image',
+          type: 'document',
           source: {
             type: 'base64',
-            media_type: 'image/jpeg',
-            data: img.imageBase64
+            media_type: 'application/pdf',
+            data: f.pdfBase64
           }
         });
+        logLine(`// ✓ ${f.name} (${f.pages} pages) loaded`, 'highlight');
+        await delay(200);
       }
-      await delay(200);
     }
 
     // Add the text prompt
@@ -1548,9 +1553,7 @@ RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER, NO 
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
-        prompt,
-        messages: [{ role: 'user', content: messageContent }],
-        hasImages
+        messages: [{ role: 'user', content: messageContent }]
       })
     });
 
