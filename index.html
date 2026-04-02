@@ -645,6 +645,7 @@ body::before {
         <div class="upload-label" id="resultsStepLabel">// Step 2 of 2 — RFI Analysis</div>
         <div class="analysis-title" id="analysisTitle">ANALYZING<br>DRAWINGS...</div>
         <div class="analysis-sub" id="analysisSub">AI is reading your construction documents</div>
+        <div id="analysisTimeHint" style="font-family:var(--mono);font-size:11px;color:var(--amber);opacity:0.7;margin-top:8px;letter-spacing:0.5px;">⏱ Typical analysis time: 30–90 seconds</div>
       </div>
       <div style="display:flex; flex-direction:column; align-items:flex-end; gap:12px; flex-shrink:0;">
         <div class="analysis-status" id="analysisStatus">
@@ -662,6 +663,12 @@ body::before {
 
     <!-- RFI output area -->
     <div id="rfiOutput" class="hidden">
+      <!-- Analyzed files summary -->
+      <div id="analyzedFilesSummary" style="background:white; border:1px solid var(--line); padding:14px 20px; margin-bottom:20px; display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+        <div style="font-family:var(--mono);font-size:10px;letter-spacing:1.5px;text-transform:uppercase;opacity:0.45;">Analyzed:</div>
+        <div id="analyzedFilesList" style="display:flex;gap:8px;flex-wrap:wrap;"></div>
+      </div>
+
       <div class="rfi-section-title">
         GENERATED RFIS
         <span class="rfi-count-badge" id="rfiCountBadge">0</span>
@@ -780,6 +787,18 @@ async function handleLoggedIn(user) {
   document.getElementById('userEmailDisplay').style.display = 'block';
   document.getElementById('userEmailDisplay').textContent = user.email;
 
+  // ALWAYS check for Stripe return first — even if they already have a plan
+  // This handles upgrades from Starter to Pro
+  const stripeReturn = window.location.search.includes('paid=');
+  const pendingPlan = safeStorage.get('pendingPlan');
+
+  if (stripeReturn && pendingPlan) {
+    // Coming back from Stripe — activate new plan immediately
+    safeStorage.remove('pendingPlan');
+    await activatePlan(user.id, pendingPlan);
+    return;
+  }
+
   // Set plan from profile
   if (profile?.plan && profile.plan !== 'none') {
     STATE.plan = profile.plan;
@@ -793,20 +812,10 @@ async function handleLoggedIn(user) {
     updateQuota();
     showSection('sec-upload');
   } else {
-    // Check for pending plan from Stripe return or plan selection
-    const pendingPlan = safeStorage.get('pendingPlan');
+    // Check for pending plan — going TO Stripe
     if (pendingPlan) {
       safeStorage.remove('pendingPlan');
-      // Check if this is a return FROM Stripe (they already paid) or going TO Stripe
-      const fromStripe = document.referrer.includes('stripe.com') || 
-                         window.location.search.includes('paid=');
-      if (fromStripe) {
-        // Coming back from Stripe — activate their plan immediately
-        await activatePlan(user.id, pendingPlan);
-      } else {
-        // Going to Stripe — show payment screen
-        showPaymentScreen(pendingPlan, pendingPlan === 'pro' ? 'Professional' : 'Starter');
-      }
+      showPaymentScreen(pendingPlan, pendingPlan === 'pro' ? 'Professional' : 'Starter');
     } else {
       // Logged in but no plan — show plans page
       showSection('sec-plans');
@@ -1570,6 +1579,7 @@ CRITICAL JSON RULES:
     document.getElementById('analysisTitle').textContent = 'ANALYSIS\nCOMPLETE';
     document.getElementById('analysisSub').textContent =
       `${rfis.length} RFIs generated from ${STATE.files.reduce((a,f)=>a+f.pages,0)} pages`;
+    document.getElementById('analysisTimeHint').style.display = 'none';
     document.getElementById('statusText').textContent = 'Complete';
     document.getElementById('statusText').style.color = '#7aab6e';
     document.querySelector('.pulse-dot').style.background = '#7aab6e';
@@ -1612,6 +1622,21 @@ function renderRFIs(rfis, filter = 'all') {
 
   document.getElementById('rfiCountBadge').textContent = filtered.length;
   document.getElementById('rfiOutput').classList.remove('hidden');
+
+  // Show analyzed files
+  const filesList = document.getElementById('analyzedFilesList');
+  if (filesList && STATE.files.length > 0) {
+    filesList.innerHTML = STATE.files.map(f =>
+      `<div style="font-family:var(--mono);font-size:11px;background:var(--paper);border:1px solid var(--line);padding:4px 12px;display:flex;align-items:center;gap:6px;">
+        <span>📄</span>
+        <span style="font-weight:500;">${f.name}</span>
+        <span style="opacity:0.45;">${f.pages} pages · ${f.size}</span>
+      </div>`
+    ).join('');
+    document.getElementById('analyzedFilesSummary').style.display = 'flex';
+  } else {
+    document.getElementById('analyzedFilesSummary').style.display = 'none';
+  }
 
   filtered.forEach((rfi, i) => {
     const card = document.createElement('div');
