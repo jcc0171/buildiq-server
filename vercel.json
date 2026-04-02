@@ -1,12 +1,16 @@
 {
-  "headers": [
+  "functions": {
+    "api/analyze.js": {
+      "maxDuration": 60
+    },
+    "api/auth.js": {
+      "maxDuration": 30
+    }
+  },
+  "routes": [
     {
-      "source": "/api/(.*)",
-      "headers": [
-        { "key": "Access-Control-Allow-Origin", "value": "*" },
-        { "key": "Access-Control-Allow-Methods", "value": "GET, POST, OPTIONS" },
-        { "key": "Access-Control-Allow-Headers", "value": "Content-Type" }
-      ]
+      "src": "/api/(.*)",
+      "dest": "/api/$1"
     }
   ]
 }
