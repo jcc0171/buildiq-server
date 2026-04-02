@@ -794,9 +794,9 @@ async function handleLoggedIn(user) {
     showSection('sec-upload');
   } else {
     // Check for pending plan from Stripe return or plan selection
-    const pendingPlan = sessionStorage.getItem('pendingPlan');
+    const pendingPlan = safeStorage.get('pendingPlan');
     if (pendingPlan) {
-      sessionStorage.removeItem('pendingPlan');
+      safeStorage.remove('pendingPlan');
       // They just signed up and chose a plan — show payment screen
       showPaymentScreen(pendingPlan, pendingPlan === 'pro' ? 'Professional' : 'Starter');
     } else {
@@ -941,6 +941,13 @@ window.addEventListener('DOMContentLoaded', function() {
 /* ═══════════════════════════════════════════
    APP STATE
 ═══════════════════════════════════════════ */
+
+// Safe sessionStorage wrapper — Edge tracking prevention can block it
+const safeStorage = {
+  get: (k) => { try { return sessionStorage.getItem(k); } catch(e) { return null; } },
+  set: (k,v) => { try { sessionStorage.setItem(k,v); } catch(e) {} },
+  remove: (k) => { try { sessionStorage.removeItem(k); } catch(e) {} }
+};
 const STATE = {
   plan: null,
   planLabel: '',
@@ -1005,12 +1012,15 @@ function showSection(id) {
    If user is logged in, activate their plan. If not, open signup first.
 ═══════════════════════════════════════════ */
 (function handleStripeReturn() {
-  const params = new URLSearchParams(window.location.search);
-  const paid = params.get('paid');
-  if (paid && (paid === 'starter' || paid === 'pro')) {
-    // Store the plan in sessionStorage so we can activate after login/signup
-    sessionStorage.setItem('pendingPlan', paid);
-    window.history.replaceState({}, '', window.location.pathname);
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const paid = params.get('paid');
+    if (paid && (paid === 'starter' || paid === 'pro')) {
+      safeStorage.set('pendingPlan', paid);
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  } catch(e) {
+    console.warn('Stripe return handler error:', e);
   }
 })();
 
@@ -1029,7 +1039,7 @@ function selectPlan(plan, label) {
   STATE.pagesMax   = plan === 'starter' ? 30 : 50;
 
   // Store chosen plan
-  sessionStorage.setItem('pendingPlan', plan);
+  safeStorage.set('pendingPlan', plan);
 
   // If already logged in, go straight to Stripe
   if (CURRENT_USER) {
@@ -1058,7 +1068,7 @@ function showPaymentScreen(plan, label) {
 }
 
 function redirectToStripe() {
-  const plan = sessionStorage.getItem('pendingPlan') || STATE.plan || 'starter';
+  const plan = safeStorage.get('pendingPlan') || STATE.plan || 'starter';
   const btn = document.getElementById('stripeRedirectBtn');
   btn.textContent = 'Redirecting to Stripe...';
   btn.style.opacity = '0.6';
