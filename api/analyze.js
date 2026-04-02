@@ -15,9 +15,10 @@ export default async function handler(req, res) {
   }
 
   try {
-    const prompt = req.body?.prompt;
-    if (!prompt) {
-      res.status(400).json({ error: 'No prompt' });
+    const { prompt, messages, hasImages } = req.body || {};
+
+    if (!prompt && !messages) {
+      res.status(400).json({ error: 'No prompt or messages provided' });
       return;
     }
 
@@ -25,6 +26,19 @@ export default async function handler(req, res) {
     if (!key) {
       res.status(500).json({ error: 'No API key' });
       return;
+    }
+
+    // Build the message content
+    // If we have structured messages with images, use those
+    // Otherwise fall back to simple text prompt
+    let messageContent;
+
+    if (messages && messages.length > 0 && hasImages) {
+      // Visual analysis mode — use the full message array with images
+      messageContent = messages;
+    } else {
+      // Text only mode — simple prompt
+      messageContent = [{ role: 'user', content: prompt }];
     }
 
     const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -35,16 +49,16 @@ export default async function handler(req, res) {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-opus-4-5-20251101', // Use most capable model for best RFI quality
         max_tokens: 4000,
-        messages: [{ role: 'user', content: prompt }]
+        messages: messageContent
       })
     });
 
     const data = await r.json();
     res.status(200).json(data);
 
-  } catch (e) {
+  } catch(e) {
     res.status(500).json({ error: e.message });
   }
 }
