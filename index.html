@@ -1251,7 +1251,7 @@ async function processFiles(newFiles) {
         continue;
       }
 
-      // Extract text from each page individually with rich metadata
+      // Extract text AND render each page as image for visual analysis
       for (let i = 1; i <= Math.min(pageCount, STATE.pagesMax); i++) {
         const page = await pdf.getPage(i);
         const content = await page.getTextContent();
@@ -1273,11 +1273,27 @@ async function processFiles(newFiles) {
         else if (pt.includes('civil') || pt.includes('grading') || pt.includes('drainage') || pt.includes('utility')) discipline = 'Civil';
         else if (pt.includes('fire') || pt.includes('sprinkler') || pt.includes('suppression')) discipline = 'Fire Protection';
 
+        // Render page as image for visual analysis
+        let imageBase64 = null;
+        try {
+          const viewport = page.getViewport({ scale: 1.5 }); // Higher scale = better detail
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext('2d');
+          await page.render({ canvasContext: ctx, viewport }).promise;
+          // Convert to base64 JPEG (smaller than PNG, good enough for analysis)
+          imageBase64 = canvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+        } catch(imgErr) {
+          console.warn(`Could not render page ${i} as image:`, imgErr);
+        }
+
         pageData.push({
           pageNum: i,
           sheetNum,
           discipline,
-          text: pageText
+          text: pageText,
+          imageBase64 // Will be null if rendering failed
         });
 
         // Build structured text with rich context
@@ -1372,15 +1388,37 @@ async function startAnalysis() {
     log.scrollTop = log.scrollHeight;
   };
 
-  // Build rich page-by-page drawing summary for conflict detection
+  // Build rich page-by-page drawing summary combining TEXT + IMAGES
   const drawingSummary = STATE.files.map(f => {
     const pageIndex = f.pageData && f.pageData.length > 0
       ? f.pageData.map(p =>
-          `PAGE ${p.pageNum} | SHEET: ${p.sheetNum} | DISCIPLINE: ${p.discipline}\n${p.text.slice(0, 500)}`
+          `PAGE ${p.pageNum} | SHEET: ${p.sheetNum} | DISCIPLINE: ${p.discipline}\n${p.text.slice(0, 800)}`
         ).join('\n\n---\n\n')
       : f.text.slice(0, 8000);
     return `FILE: ${f.name} (${f.pages} pages)\n\nPAGE-BY-PAGE BREAKDOWN:\n${pageIndex}`;
   }).join('\n\n=== NEXT FILE ===\n\n');
+
+  // Collect page images for visual analysis
+  const pageImages = [];
+  for (const f of STATE.files) {
+    if (f.pageData) {
+      for (const p of f.pageData) {
+        if (p.imageBase64) {
+          pageImages.push({
+            pageNum: p.pageNum,
+            sheetNum: p.sheetNum,
+            discipline: p.discipline,
+            fileName: f.name,
+            imageBase64: p.imageBase64
+          });
+        }
+      }
+    }
+  }
+
+  const hasImages = pageImages.length > 0;
+  logLine(`// ${hasImages ? 'Visual + text analysis' : 'Text analysis'} — ${STATE.files.reduce((a,f)=>a+f.pages,0)} sheets`, 'highlight');
+  await delay(300);
 
   logLine('// PlanIQ Pro AI Engine v2.4 — Initialized', 'highlight');
   logLine(`// Loading ${STATE.files.length} drawing set(s)...`);
@@ -1396,72 +1434,74 @@ async function startAnalysis() {
 
   // RFI count limit based on plan
   const rfiLimit = STATE.plan === 'pro' ? 12 : 10;
+  const visualNote = hasImages 
+    ? 'You have been provided BOTH the visual images of each drawing page AND the extracted text. Use BOTH to identify issues — the images show you exactly what is drawn, the text gives you labels and references.'
+    : 'You have been provided the extracted text from each drawing page.';
 
-  const prompt = `You are the most elite construction project manager in the world — a licensed architect and engineer with 30 years of experience on complex commercial projects. You have an exceptional eye for every type of issue that causes field problems, change orders, and delays.
+  const prompt = `You are the most elite construction project manager and licensed architect/engineer in the world with 30 years of experience on complex commercial and residential projects. You have an exceptional eye for drawing conflicts, code violations, missing information, and coordination issues that cause costly field problems.
 
-You are performing a comprehensive constructability and coordination review of a full construction drawing set. Each page has been extracted with its sheet number and discipline identified.
+${visualNote}
 
-DRAWING SET — PAGE BY PAGE:
+DRAWING SET — PAGE BY PAGE TEXT CONTENT:
 ${drawingSummary}
 
-YOUR MISSION: Generate exactly ${rfiLimit} professional RFIs covering the FULL SPECTRUM of issues in these drawings.
+YOUR MISSION: Generate EXACTLY ${rfiLimit} professional RFIs. You MUST generate all ${rfiLimit} — do not stop early. Spread them across the FULL drawing set.
 
-ELITE ANALYSIS RULES — FOLLOW ALL OF THESE:
+VISUAL ANALYSIS INSTRUCTIONS (if images provided):
+- Study each page image carefully — look at dimensions, details, notes, symbols
+- Identify spatial conflicts, missing callouts, incomplete details
+- Note anything that would stop a tradesperson in the field
+- Cross-reference between pages for coordination conflicts
 
-TYPES OF RFIS TO GENERATE (spread across all categories):
-A) SINGLE-PAGE ISSUES — problems found on one sheet alone:
-   - Missing dimensions, unclear dimensions, or dimension conflicts on a single sheet
+TYPES OF RFIS TO GENERATE — USE ALL CATEGORIES:
+A) SINGLE-PAGE ISSUES:
+   - Missing or conflicting dimensions
    - Incomplete details or missing callouts
    - Spec section referenced but not provided
-   - Room or space not fully defined (no finish, no ceiling height, no lighting)
+   - Room not fully defined (no finish schedule, ceiling height, or lighting)
    - Door or window not in schedule
-   - Keynote referenced but not explained
    - Equipment shown but not specified
-   - Code compliance issue on one sheet (ADA clearance, egress width, occupancy load)
-   - Fire rating not indicated on rated wall or assembly
+   - Code compliance issues (ADA clearance, egress width, occupant load)
+   - Fire rating not indicated on rated assembly
+   - General notes that conflict with drawn conditions
+   - Title block info incomplete or placeholder (XXX values)
 
-B) CROSS-PAGE / CROSS-TRADE CONFLICTS — problems between multiple sheets:
-   - Structural element conflicts with MEP routing
-   - Architectural floor plan conflicts with structural framing plan
-   - Ceiling height on arch plan conflicts with duct/beam depth
+B) CROSS-PAGE CONFLICTS:
+   - Structural elements conflict with MEP routing
+   - Architectural plan conflicts with structural framing
+   - Ceiling heights conflict with duct/beam depths
    - Plumbing or electrical penetrating rated assembly without detail
-   - Civil grading conflicts with architectural finish floor elevation
-   - Fire protection head location conflicts with structural or architectural
+   - Civil grading conflicts with finish floor elevation
+   - Dimensions don't match between plans and elevations
+   - Inconsistent room names or numbers between sheets
 
-C) DRAWING SET LEVEL ISSUES:
-   - Missing sheets referenced but not in set
-   - Inconsistent keynotes between floors
+C) DRAWING SET LEVEL:
+   - Missing sheets referenced but not included
    - Specification conflicts with drawn conditions
    - Phasing or sequencing conflicts
+   - Inconsistent keynotes between sheets
 
 MANDATORY RULES:
-1. Every RFI MUST include specific page number AND sheet number in "page_ref" — e.g. "Page 3, Sheet A-201" — MANDATORY
-2. For cross-trade conflicts reference BOTH sheets — e.g. "Page 3, Sheet A-201 vs Page 7, Sheet M-301"
-3. Reference ACTUAL content — real room numbers, keynote numbers, dimensions, equipment tags, grid lines from the text
-4. NEVER write a generic RFI — every RFI must be traceable to specific drawing content
-5. Maximum 2 RFIs per sheet — spread across the entire drawing set
-6. Priority: HIGH = safety/code/structural/field stoppage. MEDIUM = needs resolution before trade starts. LOW = clarification that won't stop work.
-7. Write descriptions that a contractor or architect can act on immediately
+1. Generate EXACTLY ${rfiLimit} RFIs — no more, no less
+2. Every RFI MUST cite specific page number AND sheet number
+3. Reference ACTUAL content — real room numbers, dimensions, grid lines, equipment tags
+4. NEVER write a generic RFI — every one must be traceable to specific content
+5. Spread RFIs across different pages and disciplines
+6. Priority: HIGH = safety/code/structural/field stoppage. MEDIUM = needs resolution before trade starts. LOW = clarification won't stop work.
+7. Write descriptions a contractor or architect can act on immediately
 
-RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER, NO TRAILING COMMAS, NO COMMENTS.
-
-CRITICAL JSON RULES:
-- Use double quotes for ALL strings
-- No trailing commas
-- No comments inside JSON
-- Escape any quotes inside strings with \"
-- Return ONLY the raw JSON array starting with [ and ending with ]
+RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER, NO TRAILING COMMAS.
 
 [
   {
     "id": "RFI-001",
-    "title": "Specific title naming the exact issue, location, and trades involved",
+    "title": "Specific title naming exact issue, location, and trades involved",
     "priority": "high",
     "discipline": "Architectural",
     "page_ref": "Page X, Sheet ABC-123",
-    "location": "Specific room number, grid intersection, or area name from the drawings",
-    "description": "Sentence 1: What the drawing specifically shows. Sentence 2: What is the conflict. Sentence 3: What information is needed to resolve it.",
-    "spec_ref": "Sheet M-201",
+    "location": "Specific room number, grid intersection, or area",
+    "description": "What the drawing shows. What is the conflict or missing information. What is needed to resolve it and why it matters in the field.",
+    "spec_ref": "Sheet or spec reference",
     "cost_impact": "Low (<$5K)",
     "schedule_impact": "None"
   }
@@ -1473,10 +1513,45 @@ CRITICAL JSON RULES:
     logLine('// Sending to PlanIQ Pro secure AI server...', 'highlight');
     await delay(300);
 
+    // Build message content — text prompt + page images for visual analysis
+    const messageContent = [];
+
+    // Add page images first (Claude reads images before text for best results)
+    if (hasImages) {
+      logLine(`// Uploading ${pageImages.length} drawing pages for visual analysis...`, 'highlight');
+      // Send up to 20 pages as images to stay within token limits
+      const imagesToSend = pageImages.slice(0, 20);
+      for (const img of imagesToSend) {
+        messageContent.push({
+          type: 'text',
+          text: `--- Page ${img.pageNum} | Sheet: ${img.sheetNum} | Discipline: ${img.discipline} | File: ${img.fileName} ---`
+        });
+        messageContent.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: 'image/jpeg',
+            data: img.imageBase64
+          }
+        });
+      }
+      await delay(200);
+    }
+
+    // Add the text prompt
+    messageContent.push({
+      type: 'text',
+      text: prompt
+    });
+
     const response = await fetch(PROXY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prompt })
+      body: JSON.stringify({ 
+        prompt,
+        messages: [{ role: 'user', content: messageContent }],
+        hasImages
+      })
     });
 
     if (!response.ok) {
