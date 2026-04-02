@@ -529,7 +529,7 @@ body::before {
         <div class="plan-card-note">per month · unlimited uploads</div>
         <div class="plan-card-divider"></div>
         <div class="plan-feat">Unlimited uploads</div>
-        <div class="plan-feat">Up to 35 pages per drawing set</div>
+        <div class="plan-feat">Up to 50 pages per drawing set</div>
         <div class="plan-feat">Up to 12 RFIs generated</div>
         <div class="plan-feat">Full AI RFI analysis</div>
         <div class="plan-feat">PDF + CSV export</div>
@@ -664,7 +664,6 @@ body::before {
       <div class="export-actions">
         <button class="export-btn" onclick="exportCSV()">↓ Download CSV</button>
         <button class="export-btn primary" onclick="STATE.plan==='demo' ? showSection('sec-plans') : showSection('sec-upload')">+ New Upload</button>
-        <button class="export-btn" onclick="showSection('sec-plans')" style="opacity:0.6;">← Plans</button>
       </div>
     </div>
   </div>
@@ -744,7 +743,7 @@ async function handleLoggedIn(user) {
     STATE.plan = profile.plan;
     STATE.planLabel = profile.plan === 'pro' ? 'Professional' : 'Starter';
     STATE.uploadsMax = profile.plan === 'pro' ? 999 : 2;
-    STATE.pagesMax   = profile.plan === 'pro' ? 35 : 30;
+    STATE.pagesMax   = profile.plan === 'pro' ? 50 : 30;
     STATE.uploadsUsed = profile.uploads_used || 0;
     document.getElementById('planLabel').textContent = STATE.planLabel;
     document.getElementById('planPill').style.display = 'flex';
@@ -947,7 +946,7 @@ function selectPlan(plan, label) {
   STATE.plan = plan;
   STATE.planLabel = label;
   STATE.uploadsMax = plan === 'starter' ? 2 : 999;
-  STATE.pagesMax   = plan === 'starter' ? 30 : 35;
+  STATE.pagesMax   = plan === 'starter' ? 30 : 50;
 
   // Store chosen plan
   sessionStorage.setItem('pendingPlan', plan);
@@ -969,7 +968,7 @@ function selectPlan(plan, label) {
 function showPaymentScreen(plan, label) {
   const planNames  = { starter: 'PlanIQ Pro — Starter', pro: 'PlanIQ Pro — Professional' };
   const planPrices = { starter: '$39', pro: '$149/mo' };
-  const planDescs  = { starter: 'One-time · 2 uploads · 30 pages each', pro: 'Monthly · Unlimited uploads · 35 pages each' };
+  const planDescs  = { starter: 'One-time · 2 uploads · 30 pages each', pro: 'Monthly · Unlimited uploads · 50 pages each' };
   document.getElementById('payFormTitle').textContent = 'Complete Your Order';
   document.getElementById('payFormSub').textContent   = plan === 'starter' ? 'Starter Plan — $39 one-time' : 'Professional Plan — $149/month';
   document.getElementById('orderPlanName').textContent  = planNames[plan];
@@ -1105,6 +1104,14 @@ function handleFileSelect(e) {
 }
 
 async function processFiles(newFiles) {
+  // Auto-clear previous files for simplicity — one drawing set at a time
+  if (STATE.files.length > 0) {
+    STATE.files = [];
+    STATE.uploadsUsed = 0;
+    document.getElementById('uploadedFiles').innerHTML = '';
+    updateQuota();
+  }
+
   for (const file of newFiles) {
     if (!file.name.toLowerCase().endsWith('.pdf')) {
       alert(`${file.name} is not a PDF. Only PDFs are accepted.`);
@@ -1325,20 +1332,27 @@ MANDATORY RULES:
 6. Priority: HIGH = safety/code/structural/field stoppage. MEDIUM = needs resolution before trade starts. LOW = clarification that won't stop work.
 7. Write descriptions that a contractor or architect can act on immediately
 
-RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER.
+RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER, NO TRAILING COMMAS, NO COMMENTS.
+
+CRITICAL JSON RULES:
+- Use double quotes for ALL strings
+- No trailing commas
+- No comments inside JSON
+- Escape any quotes inside strings with \"
+- Return ONLY the raw JSON array starting with [ and ending with ]
 
 [
   {
     "id": "RFI-001",
     "title": "Specific title naming the exact issue, location, and trades involved",
-    "priority": "high" or "medium" or "low",
-    "discipline": "Architectural" or "Structural" or "MEP" or "Civil" or "Fire Protection",
+    "priority": "high",
+    "discipline": "Architectural",
     "page_ref": "Page X, Sheet ABC-123",
     "location": "Specific room number, grid intersection, or area name from the drawings",
-    "description": "Sentence 1: What the drawing specifically shows. Sentence 2: What is the conflict, gap, or ambiguity — reference the other sheet if cross-trade. Sentence 3: Why this matters in the field and exactly what information is needed to resolve it.",
-    "spec_ref": "Specific sheet number or spec section — e.g. Sheet M-201, Detail 3/A-401",
-    "cost_impact": "Low (<$5K)" or "Medium ($5K-$50K)" or "High (>$50K)",
-    "schedule_impact": "None" or "Low (1-3 days)" or "Medium (1-2 weeks)" or "High (2+ weeks)"
+    "description": "Sentence 1: What the drawing specifically shows. Sentence 2: What is the conflict. Sentence 3: What information is needed to resolve it.",
+    "spec_ref": "Sheet M-201",
+    "cost_impact": "Low (<$5K)",
+    "schedule_impact": "None"
   }
 ]`;
 
@@ -1386,16 +1400,64 @@ RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER.
     logLine('// Analysis complete — parsing RFI data...', 'highlight');
     await delay(400);
 
-    // Parse the JSON response
-    const clean = fullText.replace(/```json|```/g,'').trim();
+    // BULLETPROOF JSON PARSER — handles all AI response edge cases
     let rfis = [];
     try {
-      rfis = JSON.parse(clean);
-    } catch(e) {
-      // Try to extract JSON array from the text
-      const match = clean.match(/\[[\s\S]*\]/);
-      if (match) rfis = JSON.parse(match[0]);
-      else throw new Error('Could not parse RFI JSON');
+      // Step 1: Remove markdown code blocks
+      let clean = fullText.replace(/```json/gi,'').replace(/```/g,'').trim();
+
+      // Step 2: Find the JSON array — look for [ ... ]
+      const arrayMatch = clean.match(/\[[\s\S]*\]/);
+      if (!arrayMatch) throw new Error('No JSON array found in response');
+      clean = arrayMatch[0];
+
+      // Step 3: Fix common AI JSON mistakes
+      // Fix trailing commas before ] or }
+      clean = clean.replace(/,\s*([}\]])/g, '$1');
+      // Fix single quotes used instead of double quotes
+      clean = clean.replace(/'/g, '"');
+      // Fix unescaped quotes inside strings - replace " inside values
+      clean = clean.replace(/:\s*"([^"]*)"([^,}\]]*)"([^"]*)"/, ': "$1$2$3"');
+      // Remove any control characters
+      clean = clean.replace(/[\x00-\x1F\x7F]/g, ' ');
+      // Fix smart quotes
+      clean = clean.replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"');
+
+      // Step 4: Try parsing
+      try {
+        rfis = JSON.parse(clean);
+      } catch(e1) {
+        // Step 5: Last resort — extract individual RFI objects
+        const objMatches = clean.match(/\{[^{}]*\}/g);
+        if (objMatches && objMatches.length > 0) {
+          rfis = objMatches.map(obj => {
+            try { return JSON.parse(obj); } catch(e) { return null; }
+          }).filter(Boolean);
+        }
+        if (rfis.length === 0) throw new Error('Could not parse any RFIs from response');
+      }
+
+      // Step 6: Validate and clean each RFI
+      rfis = rfis.filter(r => r && r.title).map((r, i) => ({
+        id: r.id || `RFI-${String(i+1).padStart(3,'0')}`,
+        title: r.title || 'Untitled RFI',
+        priority: ['high','medium','low'].includes(r.priority) ? r.priority : 'medium',
+        discipline: r.discipline || 'General',
+        page_ref: r.page_ref || '',
+        location: r.location || '',
+        description: r.description || '',
+        spec_ref: r.spec_ref || '',
+        cost_impact: r.cost_impact || 'Unknown',
+        schedule_impact: r.schedule_impact || 'Unknown'
+      }));
+
+      if (rfis.length === 0) throw new Error('No valid RFIs found after parsing');
+
+    } catch(parseError) {
+      // If ALL parsing fails, retry once with a simplified prompt
+      logLine('// Retrying analysis with optimized format...', 'highlight');
+      await delay(500);
+      throw parseError; // Let the outer catch handle retry
     }
 
     STATE.rfis = rfis;
