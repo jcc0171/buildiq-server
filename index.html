@@ -797,8 +797,16 @@ async function handleLoggedIn(user) {
     const pendingPlan = safeStorage.get('pendingPlan');
     if (pendingPlan) {
       safeStorage.remove('pendingPlan');
-      // They just signed up and chose a plan — show payment screen
-      showPaymentScreen(pendingPlan, pendingPlan === 'pro' ? 'Professional' : 'Starter');
+      // Check if this is a return FROM Stripe (they already paid) or going TO Stripe
+      const fromStripe = document.referrer.includes('stripe.com') || 
+                         window.location.search.includes('paid=');
+      if (fromStripe) {
+        // Coming back from Stripe — activate their plan immediately
+        await activatePlan(user.id, pendingPlan);
+      } else {
+        // Going to Stripe — show payment screen
+        showPaymentScreen(pendingPlan, pendingPlan === 'pro' ? 'Professional' : 'Starter');
+      }
     } else {
       // Logged in but no plan — show plans page
       showSection('sec-plans');
@@ -817,6 +825,9 @@ async function activatePlan(userId, plan) {
   } catch(e) {
     console.warn('Plan activation error:', e);
   }
+
+  // Clean the URL
+  window.history.replaceState({}, '', window.location.pathname);
 
   STATE.plan = plan;
   STATE.planLabel = plan === 'pro' ? 'Professional' : 'Starter';
@@ -1017,7 +1028,8 @@ function showSection(id) {
     const paid = params.get('paid');
     if (paid && (paid === 'starter' || paid === 'pro')) {
       safeStorage.set('pendingPlan', paid);
-      window.history.replaceState({}, '', window.location.pathname);
+      // Don't clean URL yet — handleLoggedIn needs to detect the ?paid= parameter
+      // URL will be cleaned after activation
     }
   } catch(e) {
     console.warn('Stripe return handler error:', e);
