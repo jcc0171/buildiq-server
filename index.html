@@ -501,7 +501,7 @@ body::before {
       <div class="video-wrap" id="videoWrap">
         <!-- Replace 10c67a4c245a4635bbea1f0e59234020 below with your Loom video ID after recording -->
         <!-- Example: if your Loom URL is https://loom.com/share/abc123 then 10c67a4c245a4635bbea1f0e59234020 = abc123 -->
-        <div class="video-placeholder" onclick="this.innerHTML='<iframe src=\'https://www.loom.com/embed/10c67a4c245a4635bbea1f0e59234020\' frameborder=\'0\' allowfullscreen style=\'width:100%;height:100%;\'></iframe>'">
+        <div class="video-placeholder" onclick="this.innerHTML='<iframe src=\'https://www.loom.com/embed/47f16b9db3e24943a7222c6f9d5d4ed0\' frameborder=\'0\' allowfullscreen style=\'width:100%;height:100%;\'></iframe>'">
           <div class="video-play">▶</div>
           <div class="video-play-label">Watch Demo</div>
         </div>
@@ -602,7 +602,7 @@ body::before {
          ondragover="handleDragOver(event)" ondragleave="handleDragLeave(event)" ondrop="handleDrop(event)">
       <div class="drop-icon">📐</div>
       <div class="drop-title">DROP YOUR DRAWING SET HERE</div>
-      <div class="drop-sub">PDF only · Max 30 pages per file · Max 50MB</div>
+      <div class="drop-sub">PDF only · Max <span id="pagesMaxLabel">30</span> pages per file · Max 50MB</div>
       <button class="drop-btn" onclick="event.stopPropagation(); document.getElementById('fileInput').click()">Browse Files</button>
       <input type="file" id="fileInput" accept=".pdf" multiple onchange="handleFileSelect(event)"/>
     </div>
@@ -663,7 +663,7 @@ body::before {
       </div>
       <div class="export-actions">
         <button class="export-btn" onclick="exportCSV()">↓ Download CSV</button>
-        <button class="export-btn primary" onclick="STATE.plan==='demo' ? showSection('sec-plans') : showSection('sec-upload')">+ New Upload</button>
+        <button class="export-btn primary" onclick="resetForNewUpload()">+ New Upload</button>
       </div>
     </div>
   </div>
@@ -744,6 +744,7 @@ async function handleLoggedIn(user) {
     STATE.planLabel = profile.plan === 'pro' ? 'Professional' : 'Starter';
     STATE.uploadsMax = profile.plan === 'pro' ? 999 : 2;
     STATE.pagesMax   = profile.plan === 'pro' ? 50 : 30;
+    document.getElementById('pagesMaxLabel').textContent = STATE.pagesMax;
     STATE.uploadsUsed = profile.uploads_used || 0;
     document.getElementById('planLabel').textContent = STATE.planLabel;
     document.getElementById('planPill').style.display = 'flex';
@@ -909,6 +910,43 @@ const STATE = {
   currentFilter: 'all'
   // API key lives securely on the Vercel server — not here
 };
+
+function resetForNewUpload() {
+  // Clear all previous state
+  STATE.files = [];
+  STATE.rfis = [];
+  STATE.uploadsUsed = 0;
+  STATE.currentFilter = 'all';
+
+  // Clear UI
+  document.getElementById('uploadedFiles').innerHTML = '';
+  document.getElementById('rfiCards').innerHTML = '';
+  document.getElementById('rfiOutput').classList.add('hidden');
+  document.getElementById('exportBar').style.display = 'none';
+  document.getElementById('streamLog').innerHTML = '<span class="cursor"></span>';
+
+  // Reset analysis header
+  document.getElementById('analysisTitle').innerHTML = 'ANALYZING<br>DRAWINGS...';
+  document.getElementById('analysisSub').textContent = 'AI is reading your construction documents';
+  document.getElementById('statusText').textContent = 'Processing';
+  document.getElementById('statusText').style.color = '';
+  document.querySelector('.pulse-dot').style.background = 'var(--amber)';
+  document.querySelector('.pulse-dot').style.animationPlayState = 'running';
+
+  // Reset analyze button
+  const btn = document.getElementById('analyzeBtn');
+  btn.disabled = true;
+  btn.textContent = 'Analyze Drawings →';
+  btn.onclick = function() { startAnalysis(); };
+
+  updateQuota();
+
+  if (STATE.plan === 'demo') {
+    showSection('sec-plans');
+  } else {
+    showSection('sec-upload');
+  }
+}
 
 /* ═══════════════════════════════════════════
    NAVIGATION
