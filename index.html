@@ -1488,43 +1488,70 @@ RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER, NO 
     logLine('// Sending to PlanIQ Pro secure AI server...', 'highlight');
     await delay(300);
 
-    // Build message content — send PDFs directly to Claude
-    // This gives Claude the same full visual access as uploading in Claude chat
+    // Build message content — hybrid approach: text + page images
+    // Vercel has a 4.5MB payload limit so we can't send full PDFs
+    // Instead we send extracted text (always) + rendered page images (up to size limit)
     const messageContent = [];
-    const validFiles = STATE.files.filter(f => f.ok && f.rawFile);
+    const validFiles = STATE.files.filter(f => f.ok);
 
-    if (validFiles.length > 0) {
-      logLine(`// Sending ${validFiles.length} PDF(s) directly to AI — full visual analysis...`, 'highlight');
-      await delay(300);
+    logLine(`// Preparing visual + text analysis...`, 'highlight');
+    await delay(300);
 
-      for (const f of validFiles) {
-        // Convert File to base64 using FileReader
-        const pdfBase64 = await new Promise((resolve, reject) => {
-          const reader = new FileReader();
-          reader.onload = () => {
-            const base64 = reader.result.split(',')[1];
-            resolve(base64);
-          };
-          reader.onerror = reject;
-          reader.readAsDataURL(f.rawFile);
-        });
+    // Render pages as images and collect until we hit ~3MB limit
+    let totalSize = 0;
+    const MAX_PAYLOAD = 3 * 1024 * 1024; // 3MB limit for images
+    let pagesRendered = 0;
 
-        messageContent.push({
-          type: 'document',
-          source: {
-            type: 'base64',
-            media_type: 'application/pdf',
-            data: pdfBase64
-          }
-        });
-        logLine(`// ✓ ${f.name} (${f.pages} pages) ready`, 'highlight');
-        await delay(200);
+    for (const f of validFiles) {
+      if (!f.rawFile) continue;
+      try {
+        pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+        const arrayBuffer = await f.rawFile.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        const pagesToRender = Math.min(pdf.numPages, STATE.pagesMax);
+
+        logLine(`// Rendering ${pagesToRender} pages from ${f.name}...`, 'highlight');
+
+        for (let i = 1; i <= pagesToRender; i++) {
+          if (totalSize >= MAX_PAYLOAD) break;
+
+          const page = await pdf.getPage(i);
+          const viewport = page.getViewport({ scale: 1.2 });
+          const canvas = document.createElement('canvas');
+          canvas.width = viewport.width;
+          canvas.height = viewport.height;
+          const ctx = canvas.getContext('2d');
+          await page.render({ canvasContext: ctx, viewport }).promise;
+          const imgData = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+          const imgSize = imgData.length * 0.75; // approximate bytes
+
+          if (totalSize + imgSize > MAX_PAYLOAD) break;
+
+          const pageInfo = f.pageData?.find(p => p.pageNum === i);
+          messageContent.push({
+            type: 'text',
+            text: `--- Page ${i} | Sheet: ${pageInfo?.sheetNum || 'Unknown'} | Discipline: ${pageInfo?.discipline || 'Unknown'} ---`
+          });
+          messageContent.push({
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/jpeg', data: imgData }
+          });
+
+          totalSize += imgSize;
+          pagesRendered++;
+        }
+      } catch(renderErr) {
+        console.warn('Could not render pages:', renderErr);
       }
-    } else {
-      // Fallback to text only if no raw files available
-      logLine(`// Text analysis mode...`, 'highlight');
-      await delay(300);
     }
+
+    if (pagesRendered > 0) {
+      logLine(`// ✓ ${pagesRendered} pages rendered for visual analysis`, 'highlight');
+    } else {
+      logLine(`// Text-only analysis mode`, 'highlight');
+    }
+    await delay(200);
 
     // Always add the text prompt at the end
     messageContent.push({
