@@ -1234,11 +1234,12 @@ async function processFiles(newFiles) {
     }
     if (STATE.files.find(f => f.name === file.name)) continue;
 
-    // Parse PDF with PDF.js — extract each page individually
+    // Parse PDF with PDF.js — extract text only during upload
+    // PDF base64 conversion happens later during analysis to avoid browser crash
     const arrayBuffer = await file.arrayBuffer();
     let pageCount = 0;
     let extractedText = '';
-    let pageData = []; // Store each page separately for conflict detection
+    let pageData = [];
 
     try {
       pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -1251,20 +1252,16 @@ async function processFiles(newFiles) {
         continue;
       }
 
-      // Extract text AND render each page as image for visual analysis
+      // Extract text from each page for metadata
       for (let i = 1; i <= Math.min(pageCount, STATE.pagesMax); i++) {
         const page = await pdf.getPage(i);
         const content = await page.getTextContent();
-
-        // Get all text items with position data for better context
         const items = content.items;
         const pageText = items.map(item => item.str).join(' ').trim();
 
-        // Try to detect sheet number from page content
         const sheetMatch = pageText.match(/\b([A-Z]{1,2}-?\d{3}[A-Z]?)\b/g);
         const sheetNum = sheetMatch ? sheetMatch[0] : `Page ${i}`;
 
-        // Try to detect discipline from content
         let discipline = 'Unknown';
         const pt = pageText.toLowerCase();
         if (pt.includes('floor plan') || pt.includes('elevation') || pt.includes('reflected ceiling')) discipline = 'Architectural';
@@ -1273,44 +1270,14 @@ async function processFiles(newFiles) {
         else if (pt.includes('civil') || pt.includes('grading') || pt.includes('drainage') || pt.includes('utility')) discipline = 'Civil';
         else if (pt.includes('fire') || pt.includes('sprinkler') || pt.includes('suppression')) discipline = 'Fire Protection';
 
-        // Render page as image for visual analysis
-        // Use lower scale to keep payload size manageable
-        let imageBase64 = null;
-        try {
-          const viewport = page.getViewport({ scale: 0.8 }); // Reduced scale for smaller payload
-          const canvas = document.createElement('canvas');
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          const ctx = canvas.getContext('2d');
-          await page.render({ canvasContext: ctx, viewport }).promise;
-          // Use lower quality JPEG to keep size small
-          imageBase64 = canvas.toDataURL('image/jpeg', 0.6).split(',')[1];
-        } catch(imgErr) {
-          console.warn(`Could not render page ${i} as image:`, imgErr);
-        }
-
-        pageData.push({
-          pageNum: i,
-          sheetNum,
-          discipline,
-          text: pageText,
-          imageBase64 // Will be null if rendering failed
-        });
-
-        // Build structured text with rich context
+        pageData.push({ pageNum: i, sheetNum, discipline, text: pageText });
         extractedText += `\n\n=== PAGE ${i} | SHEET: ${sheetNum} | DISCIPLINE: ${discipline} ===\n${pageText}`;
       }
 
     } catch(err) {
-      extractedText = '[Could not extract text — drawings may be image-based. AI will analyze based on file context.]';
+      extractedText = '[Could not extract text — drawings may be image-based.]';
       pageCount = 1;
     }
-
-    // Store raw PDF as base64 for direct Claude PDF analysis
-    // This gives Claude the same view as uploading directly in chat
-    const pdfBase64 = btoa(
-      new Uint8Array(arrayBuffer).reduce((data, byte) => data + String.fromCharCode(byte), '')
-    );
 
     const fileObj = {
       name: file.name,
@@ -1318,7 +1285,7 @@ async function processFiles(newFiles) {
       pages: pageCount,
       text: extractedText,
       pageData,
-      pdfBase64, // Raw PDF for direct Claude analysis
+      rawFile: file, // Store raw File object — convert to base64 only when needed
       ok: pageCount <= STATE.pagesMax
     };
 
@@ -1524,26 +1491,42 @@ RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER, NO 
     // Build message content — send PDFs directly to Claude
     // This gives Claude the same full visual access as uploading in Claude chat
     const messageContent = [];
-    const validFiles = STATE.files.filter(f => f.ok && f.pdfBase64);
+    const validFiles = STATE.files.filter(f => f.ok && f.rawFile);
 
     if (validFiles.length > 0) {
       logLine(`// Sending ${validFiles.length} PDF(s) directly to AI — full visual analysis...`, 'highlight');
       await delay(300);
+
       for (const f of validFiles) {
+        // Convert File to base64 using FileReader
+        const pdfBase64 = await new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => {
+            const base64 = reader.result.split(',')[1];
+            resolve(base64);
+          };
+          reader.onerror = reject;
+          reader.readAsDataURL(f.rawFile);
+        });
+
         messageContent.push({
           type: 'document',
           source: {
             type: 'base64',
             media_type: 'application/pdf',
-            data: f.pdfBase64
+            data: pdfBase64
           }
         });
-        logLine(`// ✓ ${f.name} (${f.pages} pages) loaded`, 'highlight');
+        logLine(`// ✓ ${f.name} (${f.pages} pages) ready`, 'highlight');
         await delay(200);
       }
+    } else {
+      // Fallback to text only if no raw files available
+      logLine(`// Text analysis mode...`, 'highlight');
+      await delay(300);
     }
 
-    // Add the text prompt
+    // Always add the text prompt at the end
     messageContent.push({
       type: 'text',
       text: prompt
