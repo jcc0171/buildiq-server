@@ -1,3 +1,5 @@
+import { createClient } from '@supabase/supabase-js';
+
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -15,11 +17,46 @@ export default async function handler(req, res) {
   }
 
   try {
-    const { prompt, messages } = req.body || {};
+    const { prompt, messages, userId } = req.body || {};
 
     if (!prompt && !messages) {
       res.status(400).json({ error: 'No prompt or messages provided' });
       return;
+    }
+
+    // ✅ Check and enforce upload limits before running AI
+    if (userId) {
+      const supabase = createClient(
+        process.env.SUPABASE_URL,
+        process.env.SUPABASE_SERVICE_KEY
+      );
+
+      const { data: profile, error: fetchError } = await supabase
+        .from('profiles')
+        .select('uploads_used, uploads_max, plan')
+        .eq('id', userId)
+        .single();
+
+      if (fetchError) {
+        res.status(500).json({ error: 'Could not fetch user profile' });
+        return;
+      }
+
+      if (profile.uploads_used >= profile.uploads_max) {
+        res.status(403).json({ error: 'Upload limit reached. Please upgrade your plan.' });
+        return;
+      }
+
+      // ✅ Increment uploads_used BEFORE running AI (prevents bypass)
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({ uploads_used: profile.uploads_used + 1 })
+        .eq('id', userId);
+
+      if (updateError) {
+        res.status(500).json({ error: 'Could not update upload count' });
+        return;
+      }
     }
 
     const key = process.env.ANTHROPIC_API_KEY;
@@ -28,8 +65,6 @@ export default async function handler(req, res) {
       return;
     }
 
-    // Use structured messages if provided (includes PDFs)
-    // Otherwise fall back to simple text prompt
     const messageContent = messages || [{ role: 'user', content: prompt }];
 
     const r = await fetch('https://api.anthropic.com/v1/messages', {
@@ -41,7 +76,7 @@ export default async function handler(req, res) {
       },
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
-        max_tokens: 8000,
+        max_tokens: 16000,
         messages: messageContent
       })
     });
