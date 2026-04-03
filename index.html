@@ -1519,9 +1519,9 @@ RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER, NO 
     logLine(`// Preparing visual + text analysis...`, 'highlight');
     await delay(300);
 
-    // Render pages as images and collect until we hit ~3MB limit
+    // Render pages as images and collect until we hit ~4MB limit
     let totalSize = 0;
-    const MAX_PAYLOAD = 3 * 1024 * 1024; // 3MB limit for images
+    const MAX_PAYLOAD = 4 * 1024 * 1024; // 4MB limit for images
     let pagesRendered = 0;
 
     for (const f of validFiles) {
@@ -1539,13 +1539,13 @@ RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER, NO 
           if (totalSize >= MAX_PAYLOAD) break;
 
           const page = await pdf.getPage(i);
-          const viewport = page.getViewport({ scale: 1.2 });
+          const viewport = page.getViewport({ scale: 0.8 });
           const canvas = document.createElement('canvas');
           canvas.width = viewport.width;
           canvas.height = viewport.height;
           const ctx = canvas.getContext('2d');
           await page.render({ canvasContext: ctx, viewport }).promise;
-          const imgData = canvas.toDataURL('image/jpeg', 0.7).split(',')[1];
+          const imgData = canvas.toDataURL('image/jpeg', 0.5).split(',')[1];
           const imgSize = imgData.length * 0.75; // approximate bytes
 
           if (totalSize + imgSize > MAX_PAYLOAD) break;
