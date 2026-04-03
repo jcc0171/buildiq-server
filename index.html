@@ -866,6 +866,22 @@ function handleLoggedOut() {
 async function logOut() {
   if (!sbClient) return;
   await sbClient.auth.signOut();
+  // Reset all state
+  CURRENT_USER = null;
+  STATE.plan = null;
+  STATE.planLabel = '';
+  STATE.uploadsUsed = 0;
+  STATE.uploadsMax = 2;
+  STATE.userId = null;
+  STATE.files = [];
+  STATE.rfis = [];
+  // Reset UI
+  document.getElementById('logoutBtn').style.display = 'none';
+  document.getElementById('userEmailDisplay').style.display = 'none';
+  document.getElementById('planPill').style.display = 'none';
+  document.getElementById('authBtn').style.display = 'block';
+  // Go back to home
+  showSection('sec-plans');
 }
 
 // ── Auth Modal ──
@@ -1231,7 +1247,11 @@ async function processFiles(newFiles) {
       continue;
     }
     if (STATE.plan === 'starter' && STATE.uploadsUsed >= STATE.uploadsMax) {
-      alert('You have used all your uploads for this plan. Upgrade to Professional for unlimited uploads.');
+      if (confirm('You have used all your uploads for this plan.\n\nClick OK to upgrade to Professional for unlimited uploads.')) {
+        // Take them straight to Stripe since they are already logged in
+        safeStorage.set('pendingPlan', 'pro');
+        showPaymentScreen('pro', 'Professional');
+      }
       return;
     }
     if (STATE.files.find(f => f.name === file.name)) continue;
@@ -1292,8 +1312,7 @@ async function processFiles(newFiles) {
     };
 
     STATE.files.push(fileObj);
-    // NOTE: uploadsUsed is incremented by the server (analyze.js) after successful analysis
-    // Do NOT increment here — this just adds the file to the queue
+    // NOTE: Do NOT increment here — server increments after successful analysis
     updateQuota();
     renderFileRow(fileObj);
   }
