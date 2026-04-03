@@ -1292,7 +1292,8 @@ async function processFiles(newFiles) {
     };
 
     STATE.files.push(fileObj);
-    STATE.uploadsUsed++;
+    // NOTE: uploadsUsed is incremented by the server (analyze.js) after successful analysis
+    // Do NOT increment here — this just adds the file to the queue
     updateQuota();
     renderFileRow(fileObj);
   }
