@@ -1220,7 +1220,7 @@ async function processFiles(newFiles) {
   // Auto-clear previous files for simplicity — one drawing set at a time
   if (STATE.files.length > 0) {
     STATE.files = [];
-    STATE.uploadsUsed = 0;
+    // NOTE: Do NOT reset uploadsUsed here — it tracks real usage from Supabase
     document.getElementById('uploadedFiles').innerHTML = '';
     updateQuota();
   }
@@ -1422,7 +1422,7 @@ ${visualNote}
 DRAWING SET — PAGE BY PAGE TEXT CONTENT:
 ${drawingSummary}
 
-YOUR MISSION: Generate EXACTLY ${rfiLimit} professional RFIs. You MUST generate all ${rfiLimit} — do not stop early. Spread them across the FULL drawing set.
+YOUR MISSION: Generate EXACTLY ${rfiLimit} professional RFIs. You MUST generate all ${rfiLimit} — do not stop early under any circumstances. If you think you are running out of content, look harder — there are ALWAYS more conflicts, missing details, coordination issues, or code compliance questions in any real drawing set. Spread them across the FULL drawing set. Stopping before ${rfiLimit} RFIs is a failure.
 
 VISUAL ANALYSIS INSTRUCTIONS (if images provided):
 - Study each page image carefully — look at dimensions, details, notes, symbols
