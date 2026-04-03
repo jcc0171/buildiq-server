@@ -840,11 +840,12 @@ async function activatePlan(userId, plan) {
 
   STATE.plan = plan;
   STATE.planLabel = plan === 'pro' ? 'Professional' : 'Starter';
-  STATE.uploadsMax = uploadsMax;
-  STATE.pagesMax   = plan === 'pro' ? 35 : 30;
+  STATE.uploadsMax = plan === 'pro' ? 999 : 2;
+  STATE.pagesMax   = plan === 'pro' ? 50 : 30;
   STATE.uploadsUsed = 0;
   document.getElementById('planLabel').textContent = STATE.planLabel;
   document.getElementById('planPill').style.display = 'flex';
+  document.getElementById('pagesMaxLabel').textContent = STATE.pagesMax;
   updateQuota();
   window.history.replaceState({}, '', window.location.pathname);
   showSection('sec-upload');
