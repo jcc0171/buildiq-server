@@ -801,6 +801,7 @@ async function handleLoggedIn(user) {
 
   // Set plan from profile
   if (profile?.plan && profile.plan !== 'none') {
+    STATE.userId = user.id;
     STATE.plan = profile.plan;
     STATE.planLabel = profile.plan === 'pro' ? 'Professional' : 'Starter';
     STATE.uploadsMax = profile.plan === 'pro' ? 999 : 2;
@@ -1564,7 +1565,8 @@ RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER, NO 
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ 
-        messages: [{ role: 'user', content: messageContent }]
+        messages: [{ role: 'user', content: messageContent }],
+        userId: STATE.userId
       })
     });
 
