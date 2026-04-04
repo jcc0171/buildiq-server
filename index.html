@@ -1510,25 +1510,24 @@ RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER, NO 
     logLine('// Sending to PlanIQ Pro secure AI server...', 'highlight');
     await delay(300);
 
-    // Build message content — hybrid approach: text + page images
-    // Vercel has a 4.5MB payload limit so we can't send full PDFs
-    // Instead we send extracted text (always) + rendered page images (up to size limit)
-    const messageContent = [];
     const validFiles = STATE.files.filter(f => f.ok);
+    const BATCH_SIZE = 5;       // pages per API call
+    const BATCH_LIMIT = 3 * 1024 * 1024; // 3MB per batch — safely under Vercel limit
+    const SCALE = 0.7;          // 72 DPI equivalent
+    const QUALITY = 0.4;        // JPEG compression
 
+    // ── Step 1: Render ALL pages into memory ──
     logLine(`// Preparing visual + text analysis...`, 'highlight');
     await delay(300);
 
-    // Render pages as images and collect until we hit ~4MB limit
-    let totalSize = 0;
-    const MAX_PAYLOAD = 4 * 1024 * 1024; // 4MB limit for images
-    let pagesRendered = 0;
+    pdfjsLib.GlobalWorkerOptions.workerSrc =
+      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+    const allPages = []; // { pageNum, sheetNum, discipline, imgData }
 
     for (const f of validFiles) {
       if (!f.rawFile) continue;
       try {
-        pdfjsLib.GlobalWorkerOptions.workerSrc =
-          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
         const arrayBuffer = await f.rawFile.arrayBuffer();
         const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
         const pagesToRender = Math.min(pdf.numPages, STATE.pagesMax);
@@ -1536,67 +1535,138 @@ RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER, NO 
         logLine(`// Rendering ${pagesToRender} pages from ${f.name}...`, 'highlight');
 
         for (let i = 1; i <= pagesToRender; i++) {
-          if (totalSize >= MAX_PAYLOAD) break;
-
           const page = await pdf.getPage(i);
-          const viewport = page.getViewport({ scale: 0.8 });
+          const viewport = page.getViewport({ scale: SCALE });
           const canvas = document.createElement('canvas');
           canvas.width = viewport.width;
           canvas.height = viewport.height;
           const ctx = canvas.getContext('2d');
           await page.render({ canvasContext: ctx, viewport }).promise;
-          const imgData = canvas.toDataURL('image/jpeg', 0.5).split(',')[1];
-          const imgSize = imgData.length * 0.75; // approximate bytes
-
-          if (totalSize + imgSize > MAX_PAYLOAD) break;
-
+          const imgData = canvas.toDataURL('image/jpeg', QUALITY).split(',')[1];
           const pageInfo = f.pageData?.find(p => p.pageNum === i);
-          messageContent.push({
-            type: 'text',
-            text: `--- Page ${i} | Sheet: ${pageInfo?.sheetNum || 'Unknown'} | Discipline: ${pageInfo?.discipline || 'Unknown'} ---`
+          allPages.push({
+            pageNum: i,
+            sheetNum: pageInfo?.sheetNum || `Page ${i}`,
+            discipline: pageInfo?.discipline || 'Unknown',
+            imgData
           });
-          messageContent.push({
-            type: 'image',
-            source: { type: 'base64', media_type: 'image/jpeg', data: imgData }
-          });
-
-          totalSize += imgSize;
-          pagesRendered++;
         }
       } catch(renderErr) {
         console.warn('Could not render pages:', renderErr);
       }
     }
 
-    if (pagesRendered > 0) {
-      logLine(`// ✓ ${pagesRendered} pages rendered for visual analysis`, 'highlight');
-    } else {
-      logLine(`// Text-only analysis mode`, 'highlight');
-    }
+    logLine(`// ✓ ${allPages.length} pages rendered for visual analysis`, 'highlight');
     await delay(200);
 
-    // Always add the text prompt at the end
-    messageContent.push({
-      type: 'text',
-      text: prompt
-    });
+    // ── Step 2: Split into batches ──
+    const batches = [];
+    let currentBatch = [];
+    let currentSize = 0;
 
-    const response = await fetch(PROXY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        messages: [{ role: 'user', content: messageContent }],
-        userId: STATE.userId
-      })
-    });
+    for (const pg of allPages) {
+      const pgSize = pg.imgData.length * 0.75;
+      if (currentBatch.length >= BATCH_SIZE || (currentSize + pgSize > BATCH_LIMIT && currentBatch.length > 0)) {
+        batches.push(currentBatch);
+        currentBatch = [];
+        currentSize = 0;
+      }
+      currentBatch.push(pg);
+      currentSize += pgSize;
+    }
+    if (currentBatch.length > 0) batches.push(currentBatch);
 
-    if (!response.ok) {
-      const errText = await response.text();
-      throw new Error('Server error ' + response.status + ': ' + errText);
+    logLine(`// Analyzing ${batches.length} drawing batches...`, 'highlight');
+    await delay(200);
+
+    // ── Step 3: Send each batch to Claude and collect RFIs ──
+    const batchPrompt = `You are a licensed construction document reviewer with 30 years of experience. Analyze the drawing pages provided and identify conflicts, missing information, code issues, and coordination problems.
+
+For each issue found generate a formal RFI in this EXACT JSON format. RESPOND ONLY WITH A VALID JSON ARRAY — no markdown, no text before or after.
+
+[
+  {
+    "id": "RFI-001",
+    "title": "Specific title naming exact issue and trades involved",
+    "priority": "high",
+    "discipline": "Architectural",
+    "page_ref": "Page X, Sheet ABC-123",
+    "location": "Specific room, grid intersection, or area visible in the drawing",
+    "description": "What the drawing shows. What the conflict or missing info is. What is needed to resolve it.",
+    "spec_ref": "Sheet or spec reference visible in drawing",
+    "cost_impact": "Low (<$5K)",
+    "schedule_impact": "None"
+  }
+]
+
+RULES:
+- Only cite sheet numbers and grid references you can ACTUALLY SEE in the images
+- Do NOT hallucinate references
+- Each RFI must be unique and actionable
+- Priority: HIGH = safety/code/field stoppage. MEDIUM = needs resolution before trade starts. LOW = clarification only.`;
+
+    const allRawRFIs = [];
+    let batchesDone = 0;
+
+    for (const batch of batches) {
+      const batchContent = [];
+      for (const pg of batch) {
+        batchContent.push({
+          type: 'text',
+          text: `--- Page ${pg.pageNum} | Sheet: ${pg.sheetNum} | Discipline: ${pg.discipline} ---`
+        });
+        batchContent.push({
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/jpeg', data: pg.imgData }
+        });
+      }
+      batchContent.push({ type: 'text', text: batchPrompt });
+
+      try {
+        const batchResponse = await fetch(PROXY_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            messages: [{ role: 'user', content: batchContent }],
+            userId: batchesDone === 0 ? STATE.userId : null // only charge once on first batch
+          })
+        });
+
+        if (batchResponse.ok) {
+          const batchData = await batchResponse.json();
+          const batchText = batchData.content?.[0]?.text || '';
+          // Parse RFIs from this batch
+          try {
+            let clean = batchText.replace(/```json/gi,'').replace(/```/g,'').trim();
+            const arrayMatch = clean.match(/\[[\s\S]*\]/);
+            if (arrayMatch) {
+              const parsed = JSON.parse(arrayMatch[0].replace(/,\s*([}\]])/g, '$1'));
+              if (Array.isArray(parsed)) allRawRFIs.push(...parsed);
+            }
+          } catch(e) {
+            console.warn('Batch parse error:', e);
+          }
+        }
+      } catch(batchErr) {
+        console.warn('Batch error:', batchErr);
+      }
+
+      batchesDone++;
+      logLine(`// ✓ Batch ${batchesDone}/${batches.length} analyzed`, 'highlight');
+      await delay(200);
     }
 
-    const data = await response.json();
-    const fullText = data.content?.[0]?.text || '';
+    // ── Step 4: Deduplicate and limit to rfiLimit ──
+    const seen = new Set();
+    const dedupedRFIs = allRawRFIs.filter(r => {
+      if (!r || !r.title) return false;
+      const key = r.title.toLowerCase().slice(0, 50);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }).slice(0, rfiLimit);
+
+    const fullText = JSON.stringify(dedupedRFIs);
 
     logLine('// Connection established — processing analysis...', 'highlight');
     await delay(200);
