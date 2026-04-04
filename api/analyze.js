@@ -25,6 +25,7 @@ export default async function handler(req, res) {
     }
 
     // ✅ Check and enforce upload limits before running AI
+    // Only increment on first batch (userId is null for subsequent batches)
     if (userId) {
       const supabase = createClient(
         process.env.SUPABASE_URL,
@@ -58,6 +59,7 @@ export default async function handler(req, res) {
         return;
       }
     }
+    // Note: if userId is null, this is a subsequent batch — skip limit check
 
     const key = process.env.ANTHROPIC_API_KEY;
     if (!key) {
