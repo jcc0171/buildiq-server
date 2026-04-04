@@ -1660,7 +1660,8 @@ RULES:
     const seen = new Set();
     const dedupedRFIs = allRawRFIs.filter(r => {
       if (!r || !r.title) return false;
-      const key = r.title.toLowerCase().slice(0, 50);
+      // Use page_ref + first 30 chars of title as key — less aggressive dedup
+      const key = (r.page_ref + r.title.toLowerCase().slice(0, 30)).replace(/\s/g, '');
       if (seen.has(key)) return false;
       seen.add(key);
       return true;
