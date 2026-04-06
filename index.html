@@ -1511,10 +1511,10 @@ RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER, NO 
     await delay(300);
 
     const validFiles = STATE.files.filter(f => f.ok);
-    const BATCH_SIZE = 5;       // pages per API call
-    const BATCH_LIMIT = 3 * 1024 * 1024; // 3MB per batch — safely under Vercel limit
-    const SCALE = 0.7;          // 72 DPI equivalent
-    const QUALITY = 0.4;        // JPEG compression
+    const BATCH_SIZE = 4;       // fewer pages per batch = more detail per page
+    const BATCH_LIMIT = 3.5 * 1024 * 1024; // 3.5MB per batch
+    const SCALE = 1.2;          // higher resolution — readable text and schedules
+    const QUALITY = 0.65;       // good quality JPEG — AI can read fine details
 
     // ── Step 1: Render ALL pages into memory ──
     logLine(`// Preparing visual + text analysis...`, 'highlight');
@@ -1580,9 +1580,17 @@ RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER, NO 
     await delay(200);
 
     // ── Step 3: Send each batch to Claude and collect RFIs ──
-    const batchPrompt = `You are a licensed construction document reviewer with 30 years of experience. Analyze the drawing pages provided and identify conflicts, missing information, code issues, and coordination problems.
+    const batchPrompt = `You are a licensed construction document reviewer with 30 years of experience reviewing commercial and residential construction drawings. Analyze the drawing pages provided VERY carefully and identify conflicts, missing information, code issues, and coordination problems.
 
-For each issue found generate a formal RFI in this EXACT JSON format. RESPOND ONLY WITH A VALID JSON ARRAY — no markdown, no text before or after.
+CRITICAL RULES — READ CAREFULLY:
+- Study every part of each image carefully before writing any RFI — zoom into schedules, notes, dimensions, and legends
+- If a schedule, table, or detail IS visible in the drawing, do NOT write an RFI saying it is missing
+- Only write RFIs for things that are ACTUALLY missing or conflicting based on what you can see
+- Cite EXACT sheet numbers, room names, grid lines, and references that are VISIBLE in the image
+- Do NOT hallucinate or guess — if you cannot read something clearly, say so specifically
+- Look for: dimension conflicts, missing callouts, incomplete details, code compliance issues, coordination conflicts between trades, missing specs, unclear notes
+
+For each real issue found, generate a formal RFI in this EXACT JSON format. RESPOND ONLY WITH A VALID JSON ARRAY — no markdown, no text before or after.
 
 [
   {
@@ -1599,11 +1607,7 @@ For each issue found generate a formal RFI in this EXACT JSON format. RESPOND ON
   }
 ]
 
-RULES:
-- Only cite sheet numbers and grid references you can ACTUALLY SEE in the images
-- Do NOT hallucinate references
-- Each RFI must be unique and actionable
-- Priority: HIGH = safety/code/field stoppage. MEDIUM = needs resolution before trade starts. LOW = clarification only.`;
+Priority: HIGH = safety/code/structural/field stoppage. MEDIUM = needs resolution before trade starts. LOW = clarification only. Find as many REAL issues as you can — aim for 2-4 per batch.`;
 
     const allRawRFIs = [];
     let batchesDone = 0;
