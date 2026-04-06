@@ -1377,31 +1377,22 @@ async function startAnalysis() {
   showSection('sec-results');
   STATE.rfis = [];
 
-  const log = document.getElementById('streamLog');
+  // Set up log
+  const streamLog = document.getElementById('streamLog');
+  streamLog.innerHTML = '<span class="cursor"></span>';
   const logLine = (text, cls='') => {
-    const cursor = log.querySelector('.cursor');
+    const cursor = streamLog.querySelector('.cursor');
     const line = document.createElement('div');
     line.className = 'log-line ' + cls;
     line.textContent = text;
-    log.insertBefore(line, cursor);
-    log.scrollTop = log.scrollHeight;
+    streamLog.insertBefore(line, cursor);
+    streamLog.scrollTop = streamLog.scrollHeight;
   };
 
   const PROXY_URL = 'https://buildiq-server.vercel.app/api/analyze';
   const rfiLimit = STATE.plan === 'pro' ? 12 : 10;
   const validFiles = STATE.files.filter(f => f.ok);
   const totalPages = validFiles.reduce((a,f) => a + f.pages, 0);
-
-
-  const log = document.getElementById('streamLog');
-  const logLine = (text, cls='') => {
-    const cursor = log.querySelector('.cursor');
-    const line = document.createElement('div');
-    line.className = 'log-line ' + cls;
-    line.textContent = text;
-    log.insertBefore(line, cursor);
-    log.scrollTop = log.scrollHeight;
-  };
 
   // ── Render all pages as images ──
   const SCALE = 1.2;
