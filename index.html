@@ -1395,8 +1395,8 @@ async function startAnalysis() {
   const totalPages = validFiles.reduce((a,f) => a + f.pages, 0);
 
   // ── Render all pages as images ──
-  const SCALE = 1.2;
-  const QUALITY = 0.65;
+  const SCALE = 1.5;
+  const QUALITY = 0.7;
   const BATCH_LIMIT = 3.5 * 1024 * 1024;
 
   pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -1606,15 +1606,28 @@ Find 2-4 REAL issues per batch. Quality over quantity.` });
       await delay(150);
     }
 
-    // ── Deduplicate and rank ──
+    // ── Deduplicate, filter junk, and rank ──
     const seen = new Set();
     const priorityOrder = { high: 0, medium: 1, low: 2 };
+
+    // Words that indicate the AI is complaining about image quality, not real issues
+    const junkPhrases = [
+      'illegible', 'too small to read', 'cannot read', 'could not read',
+      'unclear resolution', 'resolution', 'partially legible', 'hard to read',
+      'difficult to read', 'not clearly visible', 'cannot be determined from',
+      'image quality', 'low resolution', 'blurry'
+    ];
+
     const finalRFIs = allRawRFIs
       .filter(r => {
         if (!r || !r.title) return false;
+        // Remove duplicates
         const key = r.title.toLowerCase().replace(/\s/g,'').slice(0, 40);
         if (seen.has(key)) return false;
         seen.add(key);
+        // Remove image quality complaints
+        const combined = (r.title + ' ' + r.description).toLowerCase();
+        if (junkPhrases.some(phrase => combined.includes(phrase))) return false;
         return true;
       })
       .sort((a, b) => (priorityOrder[a.priority] || 1) - (priorityOrder[b.priority] || 1))
