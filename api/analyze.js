@@ -6,27 +6,16 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept');
   res.setHeader('Access-Control-Max-Age', '86400');
 
-  if (req.method === 'OPTIONS') {
-    res.status(204).end();
-    return;
-  }
-
-  if (req.method !== 'POST') {
-    res.status(405).json({ error: 'Method not allowed' });
-    return;
-  }
+  if (req.method === 'OPTIONS') { res.status(204).end(); return; }
+  if (req.method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return; }
 
   try {
-    const { prompt, messages, userId } = req.body || {};
+    const { messages, userId, skipLimitCheck } = req.body || {};
 
-    if (!prompt && !messages) {
-      res.status(400).json({ error: 'No prompt or messages provided' });
-      return;
-    }
+    if (!messages) { res.status(400).json({ error: 'No messages provided' }); return; }
 
-    // ✅ Check and enforce upload limits before running AI
-    // Only increment on first batch (userId is null for subsequent batches)
-    if (userId) {
+    // Only check upload limits on the FIRST call (userId provided, skipLimitCheck not set)
+    if (userId && !skipLimitCheck) {
       const supabase = createClient(
         process.env.SUPABASE_URL,
         process.env.SUPABASE_SERVICE_KEY
@@ -38,36 +27,23 @@ export default async function handler(req, res) {
         .eq('id', userId)
         .single();
 
-      if (fetchError) {
-        res.status(500).json({ error: 'Could not fetch user profile' });
-        return;
-      }
+      if (fetchError) { res.status(500).json({ error: 'Could not fetch user profile' }); return; }
 
       if (profile.uploads_used >= profile.uploads_max) {
         res.status(403).json({ error: 'Upload limit reached. Please upgrade your plan.' });
         return;
       }
 
-      // ✅ Increment uploads_used BEFORE running AI (prevents bypass)
       const { error: updateError } = await supabase
         .from('profiles')
         .update({ uploads_used: profile.uploads_used + 1 })
         .eq('id', userId);
 
-      if (updateError) {
-        res.status(500).json({ error: 'Could not update upload count' });
-        return;
-      }
+      if (updateError) { res.status(500).json({ error: 'Could not update upload count' }); return; }
     }
-    // Note: if userId is null, this is a subsequent batch — skip limit check
 
     const key = process.env.ANTHROPIC_API_KEY;
-    if (!key) {
-      res.status(500).json({ error: 'No API key' });
-      return;
-    }
-
-    const messageContent = messages || [{ role: 'user', content: prompt }];
+    if (!key) { res.status(500).json({ error: 'No API key' }); return; }
 
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -79,7 +55,7 @@ export default async function handler(req, res) {
       body: JSON.stringify({
         model: 'claude-sonnet-4-20250514',
         max_tokens: 16000,
-        messages: messageContent
+        messages: messages
       })
     });
 
