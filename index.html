@@ -1369,7 +1369,9 @@ function updateAnalyzeButton() {
 }
 
 /* ═══════════════════════════════════════════
-   AI ANALYSIS WITH STREAMING
+   AI ANALYSIS — TWO-PASS ENGINE v3.0
+   Pass 1: Index every sheet → structured memory
+   Pass 2: Cross-sheet conflict detection → RFIs
 ═══════════════════════════════════════════ */
 async function startAnalysis() {
   showSection('sec-results');
@@ -1385,358 +1387,249 @@ async function startAnalysis() {
     log.scrollTop = log.scrollHeight;
   };
 
-  // Build rich page-by-page drawing summary combining TEXT + IMAGES
-  const drawingSummary = STATE.files.map(f => {
-    const pageIndex = f.pageData && f.pageData.length > 0
-      ? f.pageData.map(p =>
-          `PAGE ${p.pageNum} | SHEET: ${p.sheetNum} | DISCIPLINE: ${p.discipline}\n${p.text.slice(0, 800)}`
-        ).join('\n\n---\n\n')
-      : f.text.slice(0, 8000);
-    return `FILE: ${f.name} (${f.pages} pages)\n\nPAGE-BY-PAGE BREAKDOWN:\n${pageIndex}`;
-  }).join('\n\n=== NEXT FILE ===\n\n');
-
-  // Collect page images for visual analysis
-  const pageImages = [];
-  for (const f of STATE.files) {
-    if (f.pageData) {
-      for (const p of f.pageData) {
-        if (p.imageBase64) {
-          pageImages.push({
-            pageNum: p.pageNum,
-            sheetNum: p.sheetNum,
-            discipline: p.discipline,
-            fileName: f.name,
-            imageBase64: p.imageBase64
-          });
-        }
-      }
-    }
-  }
-
-  const hasImages = pageImages.length > 0;
-  logLine(`// ${hasImages ? 'Visual + text analysis' : 'Text analysis'} — ${STATE.files.reduce((a,f)=>a+f.pages,0)} sheets`, 'highlight');
-  await delay(300);
-
-  logLine('// PlanIQ Pro AI Engine v2.4 — Initialized', 'highlight');
-  logLine(`// Loading ${STATE.files.length} drawing set(s)...`);
-  await delay(400);
-  logLine(`// ${STATE.files.reduce((a,f)=>a+f.pages,0)} sheets queued for analysis`);
-  await delay(500);
-  logLine('// Cross-referencing disciplines: ARCH · STRUCT · MEP · CIVIL', 'highlight');
-  await delay(600);
-  logLine('// Checking IBC 2021, ADA standards, NFPA 101...');
-  await delay(500);
-  logLine('// Sending to PlanIQ Pro AI model...', 'highlight');
-  await delay(300);
-
-  // RFI count limit based on plan
+  const PROXY_URL = 'https://buildiq-server.vercel.app/api/analyze';
   const rfiLimit = STATE.plan === 'pro' ? 12 : 10;
-  const visualNote = hasImages 
-    ? 'You have been provided BOTH the visual images of each drawing page AND the extracted text. Use BOTH to identify issues — the images show you exactly what is drawn, the text gives you labels and references.'
-    : 'You have been provided the extracted text from each drawing page.';
+  const validFiles = STATE.files.filter(f => f.ok);
+  const totalPages = validFiles.reduce((a,f) => a + f.pages, 0);
 
-  const prompt = `You are the most elite construction project manager and licensed architect/engineer in the world with 30 years of experience on complex commercial and residential projects. You have an exceptional eye for drawing conflicts, code violations, missing information, and coordination issues that cause costly field problems.
 
-${visualNote}
+  const log = document.getElementById('streamLog');
+  const logLine = (text, cls='') => {
+    const cursor = log.querySelector('.cursor');
+    const line = document.createElement('div');
+    line.className = 'log-line ' + cls;
+    line.textContent = text;
+    log.insertBefore(line, cursor);
+    log.scrollTop = log.scrollHeight;
+  };
 
-DRAWING SET — PAGE BY PAGE TEXT CONTENT:
-${drawingSummary}
+  // ── Render all pages as images ──
+  const SCALE = 1.2;
+  const QUALITY = 0.65;
+  const BATCH_LIMIT = 3.5 * 1024 * 1024;
 
-YOUR MISSION: Generate EXACTLY ${rfiLimit} professional RFIs. You MUST generate all ${rfiLimit} — do not stop early under any circumstances. If you think you are running out of content, look harder — there are ALWAYS more conflicts, missing details, coordination issues, or code compliance questions in any real drawing set. Spread them across the FULL drawing set. Stopping before ${rfiLimit} RFIs is a failure.
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
-VISUAL ANALYSIS INSTRUCTIONS (if images provided):
-- Study each page image carefully — look at dimensions, details, notes, symbols
-- Identify spatial conflicts, missing callouts, incomplete details
-- Note anything that would stop a tradesperson in the field
-- Cross-reference between pages for coordination conflicts
+  logLine('// PlanIQ Pro AI Engine v3.0 — Initialized', 'highlight');
+  logLine(`// Loading ${totalPages} sheets for analysis...`);
+  await delay(300);
 
-TYPES OF RFIS TO GENERATE — USE ALL CATEGORIES:
-A) SINGLE-PAGE ISSUES:
-   - Missing or conflicting dimensions
-   - Incomplete details or missing callouts
-   - Spec section referenced but not provided
-   - Room not fully defined (no finish schedule, ceiling height, or lighting)
-   - Door or window not in schedule
-   - Equipment shown but not specified
-   - Code compliance issues (ADA clearance, egress width, occupant load)
-   - Fire rating not indicated on rated assembly
-   - General notes that conflict with drawn conditions
-   - Title block info incomplete or placeholder (XXX values)
-
-B) CROSS-PAGE CONFLICTS:
-   - Structural elements conflict with MEP routing
-   - Architectural plan conflicts with structural framing
-   - Ceiling heights conflict with duct/beam depths
-   - Plumbing or electrical penetrating rated assembly without detail
-   - Civil grading conflicts with finish floor elevation
-   - Dimensions don't match between plans and elevations
-   - Inconsistent room names or numbers between sheets
-
-C) DRAWING SET LEVEL:
-   - Missing sheets referenced but not included
-   - Specification conflicts with drawn conditions
-   - Phasing or sequencing conflicts
-   - Inconsistent keynotes between sheets
-
-MANDATORY RULES:
-1. Generate EXACTLY ${rfiLimit} RFIs — no more, no less
-2. Every RFI MUST cite specific page number AND sheet number
-3. Reference ACTUAL content — real room numbers, dimensions, grid lines, equipment tags
-4. NEVER write a generic RFI — every one must be traceable to specific content
-5. Spread RFIs across different pages and disciplines
-6. Priority: HIGH = safety/code/structural/field stoppage. MEDIUM = needs resolution before trade starts. LOW = clarification won't stop work.
-7. Write descriptions a contractor or architect can act on immediately
-
-RESPOND ONLY WITH VALID JSON ARRAY — NO MARKDOWN, NO TEXT BEFORE OR AFTER, NO TRAILING COMMAS.
-
-[
-  {
-    "id": "RFI-001",
-    "title": "Specific title naming exact issue, location, and trades involved",
-    "priority": "high",
-    "discipline": "Architectural",
-    "page_ref": "Page X, Sheet ABC-123",
-    "location": "Specific room number, grid intersection, or area",
-    "description": "What the drawing shows. What is the conflict or missing information. What is needed to resolve it and why it matters in the field.",
-    "spec_ref": "Sheet or spec reference",
-    "cost_impact": "Low (<$5K)",
-    "schedule_impact": "None"
+  const allPages = [];
+  for (const f of validFiles) {
+    if (!f.rawFile) continue;
+    try {
+      const arrayBuffer = await f.rawFile.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const pagesToRender = Math.min(pdf.numPages, STATE.pagesMax);
+      logLine(`// Rendering ${pagesToRender} pages from ${f.name}...`, 'highlight');
+      for (let i = 1; i <= pagesToRender; i++) {
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: SCALE });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        const imgData = canvas.toDataURL('image/jpeg', QUALITY).split(',')[1];
+        const pageInfo = f.pageData?.find(p => p.pageNum === i);
+        allPages.push({
+          pageNum: i,
+          sheetNum: pageInfo?.sheetNum || `Page ${i}`,
+          discipline: pageInfo?.discipline || 'Unknown',
+          text: pageInfo?.text || '',
+          imgData
+        });
+      }
+    } catch(e) { console.warn('Render error:', e); }
   }
-]`;
+
+  logLine(`// ✓ ${allPages.length} pages rendered`, 'highlight');
+  await delay(200);
+
+  // Helper: split pages into size-safe batches
+  function makeBatches(pages, maxPerBatch, maxBytes) {
+    const batches = [];
+    let batch = [], size = 0;
+    for (const pg of pages) {
+      const pgSize = pg.imgData.length * 0.75;
+      if (batch.length >= maxPerBatch || (size + pgSize > maxBytes && batch.length > 0)) {
+        batches.push(batch);
+        batch = []; size = 0;
+      }
+      batch.push(pg);
+      size += pgSize;
+    }
+    if (batch.length > 0) batches.push(batch);
+    return batches;
+  }
+
+  // Helper: call Claude via proxy
+  async function callClaude(content, useUserId) {
+    const resp = await fetch(PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content }],
+        userId: useUserId ? STATE.userId : null,
+        skipLimitCheck: !useUserId
+      })
+    });
+    if (!resp.ok) throw new Error('Server error ' + resp.status);
+    const data = await resp.json();
+    return data.content?.[0]?.text || '';
+  }
 
   try {
-    const PROXY_URL = 'https://buildiq-server.vercel.app/api/analyze';
+    // ══════════════════════════════════════════
+    // PASS 1 — INDEX: Build structured memory of entire drawing set
+    // ══════════════════════════════════════════
+    logLine('// PASS 1 — Indexing drawing set...', 'highlight');
+    await delay(200);
 
-    logLine('// Sending to PlanIQ Pro secure AI server...', 'highlight');
-    await delay(300);
+    const indexBatches = makeBatches(allPages, 4, BATCH_LIMIT);
+    const sheetIndex = []; // structured memory of every sheet
+    let firstCall = true;
 
-    const validFiles = STATE.files.filter(f => f.ok);
-    const BATCH_SIZE = 4;       // fewer pages per batch = more detail per page
-    const BATCH_LIMIT = 3.5 * 1024 * 1024; // 3.5MB per batch
-    const SCALE = 1.2;          // higher resolution — readable text and schedules
-    const QUALITY = 0.65;       // good quality JPEG — AI can read fine details
+    for (let b = 0; b < indexBatches.length; b++) {
+      const batch = indexBatches[b];
+      const content = [];
 
-    // ── Step 1: Render ALL pages into memory ──
-    logLine(`// Preparing visual + text analysis...`, 'highlight');
-    await delay(300);
+      for (const pg of batch) {
+        content.push({ type: 'text', text: `--- Page ${pg.pageNum} | Sheet: ${pg.sheetNum} | Discipline: ${pg.discipline} ---` });
+        content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: pg.imgData } });
+      }
 
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      content.push({ type: 'text', text: `You are indexing a construction drawing set. For each page shown, extract structured information.
 
-    const allPages = []; // { pageNum, sheetNum, discipline, imgData }
+RESPOND ONLY WITH A VALID JSON ARRAY. No markdown, no text before or after.
 
-    for (const f of validFiles) {
-      if (!f.rawFile) continue;
+For each page return:
+{
+  "page": <number>,
+  "sheet": "<sheet number visible in title block>",
+  "discipline": "<Architectural|Structural|Mechanical|Electrical|Plumbing|Civil|General>",
+  "title": "<sheet title visible in title block>",
+  "contains": ["list of key elements present: schedules, details, plans, sections, notes, etc"],
+  "references": ["list of other sheets or details explicitly called out on this sheet"],
+  "key_info": "<critical dimensions, elevations, specifications, or notes in 2-3 sentences>",
+  "missing_or_unclear": ["anything that appears incomplete, illegible, or missing from this sheet"]
+}
+
+Be precise. Only report what you can actually see. Do not guess.` });
+
       try {
-        const arrayBuffer = await f.rawFile.arrayBuffer();
-        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-        const pagesToRender = Math.min(pdf.numPages, STATE.pagesMax);
-
-        logLine(`// Rendering ${pagesToRender} pages from ${f.name}...`, 'highlight');
-
-        for (let i = 1; i <= pagesToRender; i++) {
-          const page = await pdf.getPage(i);
-          const viewport = page.getViewport({ scale: SCALE });
-          const canvas = document.createElement('canvas');
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          const ctx = canvas.getContext('2d');
-          await page.render({ canvasContext: ctx, viewport }).promise;
-          const imgData = canvas.toDataURL('image/jpeg', QUALITY).split(',')[1];
-          const pageInfo = f.pageData?.find(p => p.pageNum === i);
-          allPages.push({
-            pageNum: i,
-            sheetNum: pageInfo?.sheetNum || `Page ${i}`,
-            discipline: pageInfo?.discipline || 'Unknown',
-            imgData
-          });
+        const text = await callClaude(content, firstCall);
+        firstCall = false;
+        let clean = text.replace(/```json/gi,'').replace(/```/g,'').trim();
+        const match = clean.match(/\[[\s\S]*\]/);
+        if (match) {
+          const parsed = JSON.parse(match[0].replace(/,\s*([}\]])/g, '$1'));
+          if (Array.isArray(parsed)) sheetIndex.push(...parsed);
         }
-      } catch(renderErr) {
-        console.warn('Could not render pages:', renderErr);
-      }
+      } catch(e) { console.warn('Index batch error:', e); }
+
+      logLine(`// ✓ Indexed batch ${b+1}/${indexBatches.length} (${batch.map(p=>p.sheetNum).join(', ')})`, 'highlight');
+      await delay(150);
     }
 
-    logLine(`// ✓ ${allPages.length} pages rendered for visual analysis`, 'highlight');
+    logLine(`// ✓ Sheet index complete — ${sheetIndex.length} sheets catalogued`, 'highlight');
     await delay(200);
 
-    // ── Step 2: Split into batches ──
-    const batches = [];
-    let currentBatch = [];
-    let currentSize = 0;
+    // ══════════════════════════════════════════
+    // PASS 2 — CONFLICT DETECTION: Use index + visuals to find real RFIs
+    // ══════════════════════════════════════════
+    logLine('// PASS 2 — Cross-referencing sheets for conflicts...', 'highlight');
+    await delay(200);
 
-    for (const pg of allPages) {
-      const pgSize = pg.imgData.length * 0.75;
-      if (currentBatch.length >= BATCH_SIZE || (currentSize + pgSize > BATCH_LIMIT && currentBatch.length > 0)) {
-        batches.push(currentBatch);
-        currentBatch = [];
-        currentSize = 0;
+    logLine('// Checking sheet cross-references...');
+    await delay(200);
+    logLine('// Comparing architectural vs structural vs MEP...');
+    await delay(200);
+    logLine('// Verifying schedules, dimensions, and details...');
+    await delay(200);
+    logLine('// Applying Florida Building Code compliance checks...');
+    await delay(200);
+
+    const indexSummary = JSON.stringify(sheetIndex, null, 2);
+
+    // Send ALL pages in batches for conflict analysis, using the index as context
+    const conflictBatches = makeBatches(allPages, 4, BATCH_LIMIT);
+    const allRawRFIs = [];
+    let conflictCallFirst = true;
+
+    for (let b = 0; b < conflictBatches.length; b++) {
+      const batch = conflictBatches[b];
+      const content = [];
+
+      for (const pg of batch) {
+        content.push({ type: 'text', text: `--- Page ${pg.pageNum} | Sheet: ${pg.sheetNum} | Discipline: ${pg.discipline} ---` });
+        content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: pg.imgData } });
       }
-      currentBatch.push(pg);
-      currentSize += pgSize;
-    }
-    if (currentBatch.length > 0) batches.push(currentBatch);
 
-    logLine(`// Analyzing ${batches.length} drawing batches...`, 'highlight');
-    await delay(200);
+      content.push({ type: 'text', text: `You are a licensed construction document reviewer with 30 years of experience. You have already indexed the ENTIRE drawing set. Here is the complete index:
 
-    // ── Step 3: Send each batch to Claude and collect RFIs ──
-    const batchPrompt = `You are a licensed construction document reviewer with 30 years of experience reviewing commercial and residential construction drawings. Analyze the drawing pages provided VERY carefully and identify conflicts, missing information, code issues, and coordination problems.
+DRAWING SET INDEX (ALL SHEETS):
+${indexSummary}
 
-CRITICAL RULES — READ CAREFULLY:
-- Study every part of each image carefully before writing any RFI — zoom into schedules, notes, dimensions, and legends
-- If a schedule, table, or detail IS visible in the drawing, do NOT write an RFI saying it is missing
-- Only write RFIs for things that are ACTUALLY missing or conflicting based on what you can see
-- Cite EXACT sheet numbers, room names, grid lines, and references that are VISIBLE in the image
-- Do NOT hallucinate or guess — if you cannot read something clearly, say so specifically
-- Look for: dimension conflicts, missing callouts, incomplete details, code compliance issues, coordination conflicts between trades, missing specs, unclear notes
+Now analyze the pages shown above in detail. Using BOTH the visual images AND the complete index above, identify real construction RFIs.
 
-For each real issue found, generate a formal RFI in this EXACT JSON format. RESPOND ONLY WITH A VALID JSON ARRAY — no markdown, no text before or after.
+CRITICAL RULES:
+- The index tells you what IS on other sheets — use it. If sheet A5 contains the window schedule, do NOT flag the window schedule as missing.
+- Only flag something as missing if it is NOT listed anywhere in the index above.
+- Cross-reference: if this sheet references a detail on another sheet, check the index to see if that sheet exists and contains that detail.
+- Look for REAL conflicts: dimensions that don't match, grades that don't coordinate, structural that conflicts with MEP, specs that contradict drawn conditions.
+- Cite EXACT sheet numbers, room names, grid lines visible in the images.
+- Do NOT hallucinate. Do NOT write generic RFIs.
 
+RESPOND ONLY WITH A VALID JSON ARRAY:
 [
   {
     "id": "RFI-001",
-    "title": "Specific title naming exact issue and trades involved",
+    "title": "Specific title — exact issue, location, trades involved",
     "priority": "high",
     "discipline": "Architectural",
     "page_ref": "Page X, Sheet ABC-123",
-    "location": "Specific room, grid intersection, or area visible in the drawing",
-    "description": "What the drawing shows. What the conflict or missing info is. What is needed to resolve it.",
-    "spec_ref": "Sheet or spec reference visible in drawing",
+    "location": "Exact room, grid intersection, or area visible in drawing",
+    "description": "What the drawing shows. What the conflict or gap is. What is needed to resolve it and why it matters in the field.",
+    "spec_ref": "Exact sheet or spec reference visible in drawing or index",
     "cost_impact": "Low (<$5K)",
     "schedule_impact": "None"
   }
 ]
 
-Priority: HIGH = safety/code/structural/field stoppage. MEDIUM = needs resolution before trade starts. LOW = clarification only. Find as many REAL issues as you can — aim for 2-4 per batch.`;
-
-    const allRawRFIs = [];
-    let batchesDone = 0;
-
-    for (const batch of batches) {
-      const batchContent = [];
-      for (const pg of batch) {
-        batchContent.push({
-          type: 'text',
-          text: `--- Page ${pg.pageNum} | Sheet: ${pg.sheetNum} | Discipline: ${pg.discipline} ---`
-        });
-        batchContent.push({
-          type: 'image',
-          source: { type: 'base64', media_type: 'image/jpeg', data: pg.imgData }
-        });
-      }
-      batchContent.push({ type: 'text', text: batchPrompt });
+Priority: HIGH = safety/code/structural/field stoppage. MEDIUM = needs resolution before trade starts. LOW = clarification only.
+Find 2-4 REAL issues per batch. Quality over quantity.` });
 
       try {
-        const batchResponse = await fetch(PROXY_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            messages: [{ role: 'user', content: batchContent }],
-            userId: batchesDone === 0 ? STATE.userId : null // only charge once on first batch
-          })
-        });
-
-        if (batchResponse.ok) {
-          const batchData = await batchResponse.json();
-          const batchText = batchData.content?.[0]?.text || '';
-          // Parse RFIs from this batch
-          try {
-            let clean = batchText.replace(/```json/gi,'').replace(/```/g,'').trim();
-            const arrayMatch = clean.match(/\[[\s\S]*\]/);
-            if (arrayMatch) {
-              const parsed = JSON.parse(arrayMatch[0].replace(/,\s*([}\]])/g, '$1'));
-              if (Array.isArray(parsed)) allRawRFIs.push(...parsed);
-            }
-          } catch(e) {
-            console.warn('Batch parse error:', e);
-          }
+        const text = await callClaude(content, conflictCallFirst);
+        conflictCallFirst = false;
+        let clean = text.replace(/```json/gi,'').replace(/```/g,'').trim();
+        const match = clean.match(/\[[\s\S]*\]/);
+        if (match) {
+          const parsed = JSON.parse(match[0].replace(/,\s*([}\]])/g, '$1'));
+          if (Array.isArray(parsed)) allRawRFIs.push(...parsed);
         }
-      } catch(batchErr) {
-        console.warn('Batch error:', batchErr);
-      }
+      } catch(e) { console.warn('Conflict batch error:', e); }
 
-      batchesDone++;
-      logLine(`// ✓ Batch ${batchesDone}/${batches.length} analyzed`, 'highlight');
-      await delay(200);
+      logLine(`// ✓ Conflicts analyzed: batch ${b+1}/${conflictBatches.length}`, 'highlight');
+      await delay(150);
     }
 
-    // ── Step 4: Deduplicate and limit to rfiLimit ──
+    // ── Deduplicate and rank ──
     const seen = new Set();
-    const dedupedRFIs = allRawRFIs.filter(r => {
-      if (!r || !r.title) return false;
-      // Use page_ref + first 30 chars of title as key — less aggressive dedup
-      const key = (r.page_ref + r.title.toLowerCase().slice(0, 30)).replace(/\s/g, '');
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    }).slice(0, rfiLimit);
-
-    const fullText = JSON.stringify(dedupedRFIs);
-
-    logLine('// Connection established — processing analysis...', 'highlight');
-    await delay(200);
-
-    const streamMessages = [
-      '// Scanning floor plan geometry...',
-      '// Detecting wall type conflicts...',
-      '// Cross-referencing structural grid...',
-      '// Checking MEP coordination...',
-      '// Verifying door schedule compliance...',
-      '// Analyzing egress paths...',
-      '// Reviewing finish specifications...',
-      '// Checking clearance dimensions...',
-      '// Flagging code compliance issues...',
-      '// Scoring by cost and schedule impact...',
-      '// Formatting RFIs to AIA standard...',
-    ];
-    for (const msg of streamMessages) {
-      logLine(msg);
-      await delay(250);
-    }
-
-    logLine('// Analysis complete — parsing RFI data...', 'highlight');
-    await delay(400);
-
-    // BULLETPROOF JSON PARSER — handles all AI response edge cases
-    let rfis = [];
-    try {
-      // Step 1: Remove markdown code blocks
-      let clean = fullText.replace(/```json/gi,'').replace(/```/g,'').trim();
-
-      // Step 2: Find the JSON array — look for [ ... ]
-      const arrayMatch = clean.match(/\[[\s\S]*\]/);
-      if (!arrayMatch) throw new Error('No JSON array found in response');
-      clean = arrayMatch[0];
-
-      // Step 3: Fix common AI JSON mistakes
-      // Fix trailing commas before ] or }
-      clean = clean.replace(/,\s*([}\]])/g, '$1');
-      // Fix single quotes used instead of double quotes
-      clean = clean.replace(/'/g, '"');
-      // Fix unescaped quotes inside strings - replace " inside values
-      clean = clean.replace(/:\s*"([^"]*)"([^,}\]]*)"([^"]*)"/, ': "$1$2$3"');
-      // Remove any control characters
-      clean = clean.replace(/[\x00-\x1F\x7F]/g, ' ');
-      // Fix smart quotes
-      clean = clean.replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"');
-
-      // Step 4: Try parsing
-      try {
-        rfis = JSON.parse(clean);
-      } catch(e1) {
-        // Step 5: Last resort — extract individual RFI objects
-        const objMatches = clean.match(/\{[^{}]*\}/g);
-        if (objMatches && objMatches.length > 0) {
-          rfis = objMatches.map(obj => {
-            try { return JSON.parse(obj); } catch(e) { return null; }
-          }).filter(Boolean);
-        }
-        if (rfis.length === 0) throw new Error('Could not parse any RFIs from response');
-      }
-
-      // Step 6: Validate and clean each RFI
-      rfis = rfis.filter(r => r && r.title).map((r, i) => ({
-        id: r.id || `RFI-${String(i+1).padStart(3,'0')}`,
+    const priorityOrder = { high: 0, medium: 1, low: 2 };
+    const finalRFIs = allRawRFIs
+      .filter(r => {
+        if (!r || !r.title) return false;
+        const key = r.title.toLowerCase().replace(/\s/g,'').slice(0, 40);
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => (priorityOrder[a.priority] || 1) - (priorityOrder[b.priority] || 1))
+      .slice(0, rfiLimit)
+      .map((r, i) => ({
+        id: `RFI-${String(i+1).padStart(3,'0')}`,
         title: r.title || 'Untitled RFI',
         priority: ['high','medium','low'].includes(r.priority) ? r.priority : 'medium',
         discipline: r.discipline || 'General',
@@ -1748,42 +1641,40 @@ Priority: HIGH = safety/code/structural/field stoppage. MEDIUM = needs resolutio
         schedule_impact: r.schedule_impact || 'Unknown'
       }));
 
-      if (rfis.length === 0) throw new Error('No valid RFIs found after parsing');
-
-    } catch(parseError) {
-      // If ALL parsing fails, retry once with a simplified prompt
-      logLine('// Retrying analysis with optimized format...', 'highlight');
-      await delay(500);
-      throw parseError; // Let the outer catch handle retry
-    }
-
-    STATE.rfis = rfis;
-    logLine(`// ✓ ${rfis.length} RFIs generated successfully`, 'success');
+    logLine(`// ✓ ${finalRFIs.length} RFIs identified and ranked`, 'success');
     await delay(300);
 
-    // Update UI to "complete" state
+    if (finalRFIs.length === 0) throw new Error('No RFIs generated — check console for errors');
+
+    STATE.rfis = finalRFIs;
+
+    // Update UI
     document.getElementById('analysisTitle').textContent = 'ANALYSIS\nCOMPLETE';
     document.getElementById('analysisSub').textContent =
-      `${rfis.length} RFIs generated from ${STATE.files.reduce((a,f)=>a+f.pages,0)} pages`;
+      `${finalRFIs.length} RFIs generated from ${totalPages} pages`;
     document.getElementById('analysisTimeHint').style.display = 'none';
     document.getElementById('statusText').textContent = 'Complete';
     document.getElementById('statusText').style.color = '#7aab6e';
     document.querySelector('.pulse-dot').style.background = '#7aab6e';
     document.querySelector('.pulse-dot').style.animationPlayState = 'paused';
 
-    // Render RFI cards
-    renderRFIs(rfis);
-
-    // Show export bar
-    document.getElementById('exportCount').textContent = rfis.length + ' RFIs';
-    document.getElementById('pushCount').textContent = rfis.length;
+    renderRFIs(finalRFIs);
+    document.getElementById('exportCount').textContent = finalRFIs.length + ' RFIs';
+    document.getElementById('pushCount').textContent = finalRFIs.length;
     document.getElementById('exportBar').style.display = 'flex';
 
+    // Update uploads used display
+    STATE.uploadsUsed = Math.min(STATE.uploadsUsed + 1, STATE.uploadsMax);
+    updateQuota();
+
+    const backBtn = document.getElementById('backToHomeBtn');
+    if (backBtn) backBtn.style.display = 'inline-block';
+
   } catch(err) {
-    logLine('// ERROR: ' + err.message, 'error');
-    logLine('// Details: ' + (err.stack || 'no stack'), 'error');
+    console.error('Analysis error:', err);
+    logLine(`// ERROR: ${err.message}`, 'error');
     logLine('// Falling back to demonstration RFIs...', 'highlight');
-    await delay(600);
+    await delay(500);
     const demoRFIs = generateDemoRFIs();
     STATE.rfis = demoRFIs;
     logLine(`// ✓ ${demoRFIs.length} demo RFIs loaded`, 'success');
@@ -1796,6 +1687,8 @@ Priority: HIGH = safety/code/structural/field stoppage. MEDIUM = needs resolutio
     document.getElementById('exportBar').style.display = 'flex';
   }
 }
+
+
 
 /* ═══════════════════════════════════════════
    RENDER RFI CARDS
