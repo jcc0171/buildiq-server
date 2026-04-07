@@ -1395,7 +1395,7 @@ async function startAnalysis() {
   const totalPages = validFiles.reduce((a,f) => a + f.pages, 0);
 
   // ── Render all pages as images ──
-  const SCALE = 1.5;
+  const SCALE = 1.8;
   const QUALITY = 0.7;
   const BATCH_LIMIT = 3.5 * 1024 * 1024;
 
@@ -1477,7 +1477,7 @@ async function startAnalysis() {
     logLine('// PASS 1 — Indexing drawing set...', 'highlight');
     await delay(200);
 
-    const indexBatches = makeBatches(allPages, 4, BATCH_LIMIT);
+    const indexBatches = makeBatches(allPages, 2, BATCH_LIMIT);
     const sheetIndex = []; // structured memory of every sheet
     let firstCall = true;
 
@@ -1544,7 +1544,7 @@ Be precise. Only report what you can actually see. Do not guess.` });
     const indexSummary = JSON.stringify(sheetIndex, null, 2);
 
     // Send ALL pages in batches for conflict analysis, using the index as context
-    const conflictBatches = makeBatches(allPages, 4, BATCH_LIMIT);
+    const conflictBatches = makeBatches(allPages, 2, BATCH_LIMIT);
     const allRawRFIs = [];
     let conflictCallFirst = true;
 
