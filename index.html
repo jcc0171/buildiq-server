@@ -1589,7 +1589,9 @@ RESPOND ONLY WITH A VALID JSON ARRAY:
 ]
 
 Priority: HIGH = safety/code/structural/field stoppage. MEDIUM = needs resolution before trade starts. LOW = clarification only.
-Find 2-4 REAL issues per batch. Quality over quantity.` });
+Find 2-4 REAL issues per batch. Quality over quantity.
+
+SCHEDULE RULE: If writing an RFI about an incomplete schedule or table, you MUST identify the EXACT cell, row, and column that is empty or missing. State the specific tag/mark (e.g. "VFD-2, HP column") and confirm you can see it is blank. If you cannot point to a specific empty cell with certainty, do NOT write the RFI.` });
 
       try {
         const text = await callClaude(content, conflictCallFirst);
