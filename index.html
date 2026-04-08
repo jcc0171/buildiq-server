@@ -1369,9 +1369,11 @@ function updateAnalyzeButton() {
 }
 
 /* ═══════════════════════════════════════════
-   AI ANALYSIS — SINGLE-PASS ENGINE v4.0
-   Each batch: index + find RFIs simultaneously
-   Final call: cross-sheet summary (text only, fast)
+   AI ANALYSIS — TEXT-FIRST ENGINE v5.0
+   Pass 1: Full extracted text → find all real RFIs
+   Pass 2: Cross-discipline check (only if multi-discipline set)
+   No image rendering. No mandatory RFI count.
+   Quality over quantity.
 ═══════════════════════════════════════════ */
 async function startAnalysis() {
   showSection('sec-results');
@@ -1389,75 +1391,49 @@ async function startAnalysis() {
   };
 
   const PROXY_URL = 'https://buildiq-server.vercel.app/api/analyze';
-  const rfiMax = STATE.plan === 'pro' ? 12 : 10; // max cap only, not a target
+  const rfiMax = STATE.plan === 'pro' ? 12 : 10;
   const validFiles = STATE.files.filter(f => f.ok);
   const totalPages = validFiles.reduce((a,f) => a + f.pages, 0);
 
-  const SCALE = 1.5;
-  const QUALITY = 0.85;
-  const BATCH_LIMIT = 3.5 * 1024 * 1024;
-  const PAGES_PER_BATCH = 2;
-
-  pdfjsLib.GlobalWorkerOptions.workerSrc =
-    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
-  logLine('// PlanIQ Pro AI Engine v4.0 — Initialized', 'highlight');
-  logLine(`// Loading ${totalPages} sheets...`);
+  logLine('// PlanIQ Pro AI Engine v5.0 — Initialized', 'highlight');
+  logLine(`// Reading ${totalPages} sheets...`);
   await delay(200);
 
-  // Render all pages
-  const allPages = [];
+  // ── Build full text corpus from already-extracted page text ──
+  // PDF.js already extracted this during upload — no re-rendering needed
+  let fullText = '';
+  const sheetList = [];
+
   for (const f of validFiles) {
-    if (!f.rawFile) continue;
-    try {
-      const arrayBuffer = await f.rawFile.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      const pagesToRender = Math.min(pdf.numPages, STATE.pagesMax);
-      logLine(`// Rendering ${pagesToRender} pages from ${f.name}...`, 'highlight');
-      for (let i = 1; i <= pagesToRender; i++) {
-        const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale: SCALE });
-        const canvas = document.createElement('canvas');
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-        const imgData = canvas.toDataURL('image/jpeg', QUALITY).split(',')[1];
-        const pageInfo = f.pageData?.find(p => p.pageNum === i);
-        allPages.push({
-          pageNum: i,
-          sheetNum: pageInfo?.sheetNum || `Page ${i}`,
-          discipline: pageInfo?.discipline || 'Unknown',
-          imgData
-        });
-      }
-    } catch(e) { console.warn('Render error:', e); }
+    if (!f.pageData || f.pageData.length === 0) {
+      // Fallback: use the stored text blob if pageData is empty
+      if (f.text) fullText += f.text + '\n\n';
+      continue;
+    }
+    for (const pg of f.pageData) {
+      const entry = `=== SHEET: ${pg.sheetNum} | PAGE: ${pg.pageNum} | DISCIPLINE: ${pg.discipline} ===\n${pg.text || '(no text extracted)'}`;
+      fullText += entry + '\n\n';
+      sheetList.push({ sheet: pg.sheetNum, discipline: pg.discipline, pageNum: pg.pageNum });
+    }
   }
 
-  logLine(`// ✓ ${allPages.length} pages rendered`, 'highlight');
+  // Trim to ~120k chars to stay well within token limits
+  const MAX_CHARS = 120000;
+  if (fullText.length > MAX_CHARS) {
+    fullText = fullText.slice(0, MAX_CHARS) + '\n\n[... additional pages truncated for length ...]';
+  }
+
+  logLine(`// ✓ Text extracted from ${sheetList.length} sheets`, 'highlight');
+  logLine('// Sending to AI for RFI analysis...', 'highlight');
   await delay(150);
 
-  // Split into batches
-  function makeBatches(pages, maxPer, maxBytes) {
-    const batches = [];
-    let cur = [], size = 0;
-    for (const pg of pages) {
-      const pgSize = pg.imgData.length * 0.75;
-      if (cur.length >= maxPer || (size + pgSize > maxBytes && cur.length > 0)) {
-        batches.push(cur); cur = []; size = 0;
-      }
-      cur.push(pg); size += pgSize;
-    }
-    if (cur.length > 0) batches.push(cur);
-    return batches;
-  }
-
-  // Call Claude
-  async function callClaude(content, useUserId) {
+  // ── Call Claude helper ──
+  async function callClaude(messages, useUserId) {
     const resp = await fetch(PROXY_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        messages: [{ role: 'user', content }],
+        messages,
         userId: useUserId ? STATE.userId : null,
         skipLimitCheck: !useUserId
       })
@@ -1467,188 +1443,132 @@ async function startAnalysis() {
     return data.content?.[0]?.text || '';
   }
 
-  // Parse RFIs from response
-  function parseRFIs(text) {
+  // ── JSON parse helper ──
+  function parseRFIArray(text) {
     try {
       let clean = text.replace(/```json/gi,'').replace(/```/g,'').trim();
       const match = clean.match(/\[[\s\S]*\]/);
-      if (!match) return { rfis: [], index: null };
-      // Try parsing as object with rfis + index keys
-      const parsed = JSON.parse(match[0].replace(/,\s*([}\]])/g, '$1'));
-      if (Array.isArray(parsed)) return { rfis: parsed, index: null };
-      return { rfis: parsed.rfis || [], index: parsed.index || null };
-    } catch(e) { return { rfis: [], index: null }; }
+      if (!match) return [];
+      return JSON.parse(match[0].replace(/,\s*([}\]])/g, '$1')) || [];
+    } catch(e) { return []; }
   }
 
   try {
-    const batches = makeBatches(allPages, PAGES_PER_BATCH, BATCH_LIMIT);
-    logLine(`// Analyzing ${batches.length} batches (index + RFIs in one pass)...`, 'highlight');
-    await delay(150);
+    // ════════════════════════════════════════
+    // PASS 1 — Primary RFI Analysis
+    // Send all extracted text in one call.
+    // ════════════════════════════════════════
+    const disciplines = [...new Set(sheetList.map(s => s.discipline).filter(d => d !== 'Unknown'))];
 
-    const allRawRFIs = [];
-    const sheetIndexEntries = []; // text summary built from each batch
-    let firstCall = true;
+    const primaryPrompt = `You are a Senior Construction Project Manager and RFI specialist with 30 years of experience on commercial projects including schools, hospitals, and government buildings.
 
-    // ── SINGLE PASS: index + RFIs per batch ──
-    for (let b = 0; b < batches.length; b++) {
-      const batch = batches[b];
-      const content = [];
+You have been given the full extracted text from a ${totalPages}-page construction drawing set. The disciplines present are: ${disciplines.join(', ') || 'Mixed'}.
 
-      for (const pg of batch) {
-        content.push({ type: 'text', text: `--- Page ${pg.pageNum} | Sheet: ${pg.sheetNum} | Discipline: ${pg.discipline} ---` });
-        content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: pg.imgData } });
+PROJECT DRAWING TEXT:
+${fullText}
+
+YOUR TASK:
+Review this drawing set and identify ONLY legitimate, job-site-ready RFIs — items that a contractor, subcontractor, or PM would actually send to the engineer of record for clarification or resolution before or during construction.
+
+WHAT MAKES A REAL RFI:
+- A specific conflict between two drawings (e.g. duct conflicts with beam at a named location)
+- Critical information shown as XXX, TBD, or "by others" with no coordination detail
+- Equipment or systems referenced but no specification, schedule, or detail provided in this set
+- A required structural, fire-rated, or code detail that is called out but not shown
+- A coordination gap between disciplines at a specific location (e.g. MEP vs structural at a named room or grid)
+- Demolition scope that requires field verification of existing conditions before proceeding
+- Underground or concealed work where existing conditions are unknown and must be confirmed
+
+WHAT IS NOT AN RFI:
+- Observations that general plans don't show mechanical details (that is expected and normal)
+- Generic statements about needing coordination without a specific conflict
+- Items already resolved or noted as "coordinate with contractor"
+- Repeating the same issue across multiple sheets
+
+RULES:
+1. Every RFI must cite the specific sheet number (e.g. M101, E601, G101) where the issue appears
+2. Write descriptions as a PM would — specific, direct, and actionable
+3. Only flag issues you can verify from the text provided
+4. Return UP TO ${rfiMax} RFIs maximum — but return FEWER if there are fewer real issues
+5. If the drawings are well-coordinated, return an empty array []
+6. Do NOT pad with weak RFIs to hit a number — quality is the only measure
+
+RESPOND ONLY WITH A VALID JSON ARRAY — no other text, no markdown:
+[
+  {
+    "title": "Specific issue title — what and where",
+    "priority": "high|medium|low",
+    "discipline": "Mechanical|Electrical|Architectural|Civil|Fire Protection|General",
+    "page_ref": "Sheet number(s) e.g. M101, E601",
+    "location": "Specific room, floor, or area",
+    "description": "What the drawings show. What is missing or conflicting. Why this needs resolution before work proceeds.",
+    "spec_ref": "Relevant sheet notes or spec references",
+    "cost_impact": "Low (<$5K)|Medium ($5K-$50K)|High (>$50K)",
+    "schedule_impact": "None|Low (1-3 days)|Medium (1-2 weeks)|High (2+ weeks)"
+  }
+]`;
+
+    const pass1Text = await callClaude([{ role: 'user', content: primaryPrompt }], true);
+    const pass1RFIs = parseRFIArray(pass1Text);
+    logLine(`// ✓ Primary analysis complete — ${pass1RFIs.length} candidate RFI(s)`, 'highlight');
+    await delay(100);
+
+    // ════════════════════════════════════════
+    // PASS 2 — Cross-discipline check
+    // Only run if 3+ disciplines found and
+    // we haven't hit the cap yet
+    // ════════════════════════════════════════
+    let pass2RFIs = [];
+    if (disciplines.length >= 3 && pass1RFIs.length < rfiMax) {
+      logLine('// Running cross-discipline coordination check...', 'highlight');
+      await delay(100);
+
+      const sheetSummary = sheetList
+        .map(s => `${s.sheet} (${s.discipline}, page ${s.pageNum})`)
+        .join(', ');
+
+      const crossPrompt = `You are a Senior Construction Project Manager reviewing a ${totalPages}-page drawing set.
+
+The drawing set contains these sheets: ${sheetSummary}
+
+Here is the full drawing text again for reference:
+${fullText.slice(0, 60000)}
+
+You have already identified these RFIs in a prior review:
+${pass1RFIs.map(r => `- ${r.title} (${r.page_ref})`).join('\n')}
+
+NOW: Look ONLY for cross-discipline coordination issues not already captured above. Specifically:
+1. A sheet in one discipline references work or a detail from another discipline that does not appear in the drawing set
+2. Equipment served by one trade (e.g. mechanical) where the corresponding electrical feed, control wiring, or structural support is absent from the drawings
+3. Demolition work in one discipline that would affect fire ratings, egress, or structural elements per another discipline with no coordination note
+4. Placeholder data (XXX, TBD, NIC) on any sheet where that data is needed for another trade to proceed
+
+Only add RFIs that are clearly different from the ones already found. Return an empty array [] if nothing new.
+Cap: return at most ${Math.max(0, rfiMax - pass1RFIs.length)} additional RFIs.
+
+RESPOND ONLY WITH A VALID JSON ARRAY using the same format as before.`;
+
+      const pass2Text = await callClaude([{ role: 'user', content: crossPrompt }], false);
+      pass2RFIs = parseRFIArray(pass2Text);
+      if (pass2RFIs.length > 0) {
+        logLine(`// ✓ Cross-discipline check found ${pass2RFIs.length} additional issue(s)`, 'highlight');
+      } else {
+        logLine('// ✓ Cross-discipline check — no additional issues', 'highlight');
       }
-
-      content.push({ type: 'text', text: `You are a Senior Project Manager with 30 years of experience. Study these drawing pages carefully.
-
-Do TWO things in ONE response — return a single JSON object:
-
-{
-  "index": [
-    {
-      "sheet": "<sheet number>",
-      "title": "<sheet title>",
-      "discipline": "<Architectural|Structural|Mechanical|Electrical|Plumbing|Civil|Fire Protection|General>",
-      "contains": ["key elements visible: schedules, plans, details, notes, equipment"],
-      "references": ["other sheets or details explicitly called out"],
-      "flags": ["anything incomplete, TBD, XXX, or missing that you can see"]
-    }
-  ],
-  "rfis": [
-    {
-      "id": "RFI-001",
-      "title": "Clear title — exact issue and location",
-      "priority": "high",
-      "discipline": "Mechanical",
-      "page_ref": "Page X, Sheet ABC-123",
-      "location": "Specific room or area",
-      "description": "What the drawing shows. What is missing or conflicting. Why it stops work or needs resolution.",
-      "spec_ref": "Sheet or note reference",
-      "cost_impact": "Low (<$5K)",
-      "schedule_impact": "None"
-    }
-  ]
-}
-
-FOR THE INDEX: Record what is actually on each sheet. Be precise.
-
-FOR THE RFIs: Act like a PM who just picked up these plans for the first time. Ask:
-- Does this sheet reference something that seems unlikely to exist elsewhere?
-- Is any critical info shown as XXX, TBD, or "by others" without coordination?
-- Is equipment shown without a specification or schedule?
-- Is there a structural penetration or modification with no engineer referenced?
-- Are there dimension or elevation conflicts visible?
-- Is fire-rated construction penetrated without a rated detail?
-- Is temporary work required but not planned?
-
-STRICT RULES:
-1. NEVER be generic — every RFI must reference a specific sheet number visible in the image (e.g. M101, A1.0, E601)
-2. EVERY RFI must identify a REAL coordination issue, conflict, or missing information
-3. DO NOT repeat the same type of issue across RFIs
-4. DO NOT guess — only flag issues that are realistic and commonly occur in construction
-5. WRITE like a professional PM — clear, direct, and jobsite-ready
-6. If information is missing, clearly state what is missing and where it should be found
-7. Return empty rfis array [] if nothing real found on these pages
-8. No minimum count — accuracy over quantity
-
-PRIORITIZE THESE ISSUE TYPES:
-- Trade coordination conflicts (HVAC vs structure, electrical vs architectural, MEP vs framing)
-- Inconsistencies between schedules and plans (VAV tags, AHU references, panel schedules)
-- Missing details or sections that are called out but not provided
-- Equipment shown without specification or schedule reference
-- Placeholder data (XXX, TBD, "by others", "coordinate with owner")
-- Structural penetrations or modifications with no engineer referenced
-- Code-related concerns (fire ratings, egress, ADA)
-- Work referenced in another building or discipline not coordinated in this set
-
-RESPOND ONLY WITH VALID JSON OBJECT (not an array).` });
-
-      try {
-        const text = await callClaude(content, firstCall);
-        firstCall = false;
-
-        // Try to parse as object with index + rfis
-        try {
-          let clean = text.replace(/```json/gi,'').replace(/```/g,'').trim();
-          // Find the outermost { }
-          const objMatch = clean.match(/\{[\s\S]*\}/);
-          if (objMatch) {
-            const parsed = JSON.parse(objMatch[0].replace(/,\s*([}\]])/g, '$1'));
-            if (parsed.rfis && Array.isArray(parsed.rfis)) allRawRFIs.push(...parsed.rfis);
-            if (parsed.index && Array.isArray(parsed.index)) sheetIndexEntries.push(...parsed.index);
-          }
-        } catch(e) {
-          // Fallback: try parsing as plain array of RFIs
-          try {
-            let clean = text.replace(/```json/gi,'').replace(/```/g,'').trim();
-            const arrMatch = clean.match(/\[[\s\S]*\]/);
-            if (arrMatch) {
-              const parsed = JSON.parse(arrMatch[0].replace(/,\s*([}\]])/g, '$1'));
-              if (Array.isArray(parsed)) allRawRFIs.push(...parsed);
-            }
-          } catch(e2) { console.warn('Parse error batch', b, e2); }
-        }
-      } catch(e) { console.warn('Batch error:', e); }
-
-      logLine(`// ✓ Batch ${b+1}/${batches.length} complete`, 'highlight');
       await delay(100);
     }
 
-    // ── FINAL SUMMARY CALL: cross-sheet issues (text only — fast) ──
-    if (sheetIndexEntries.length > 0) {
-      logLine('// Running cross-sheet analysis...', 'highlight');
-      await delay(100);
-
-      const summaryContent = [{
-        type: 'text',
-        text: `You are a Senior Project Manager. Here is the complete index of a ${totalPages}-page drawing set:
-
-${JSON.stringify(sheetIndexEntries, null, 2)}
-
-Review this index for cross-sheet issues ONLY. Look for:
-1. A sheet references a detail, section, or drawing that does NOT appear in the index
-2. A discipline references another discipline's work but that discipline is NOT in the index
-3. Equipment or systems shown in one discipline with no corresponding schedule or spec in another
-4. "Flags" listed in the index that represent real coordination gaps
-5. Work referenced as "by others" with no coordination shown
-
-IMPORTANT: Only flag issues that are clearly missing from the index. Do not flag things that are present.
-Return an empty array [] if no cross-sheet issues found.
-
-RESPOND ONLY WITH VALID JSON ARRAY:
-[{"id":"RFI-X","title":"Cross-sheet issue title","priority":"medium","discipline":"General","page_ref":"Sheets involved","location":"Area affected","description":"What is referenced but missing. Why it matters.","spec_ref":"Relevant sheet references","cost_impact":"Low (<$5K)","schedule_impact":"None"}]`
-      }];
-
-      try {
-        const summaryText = await callClaude(summaryContent, false);
-        let clean = summaryText.replace(/```json/gi,'').replace(/```/g,'').trim();
-        const match = clean.match(/\[[\s\S]*\]/);
-        if (match) {
-          const parsed = JSON.parse(match[0].replace(/,\s*([}\]])/g, '$1'));
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            allRawRFIs.push(...parsed);
-            logLine(`// ✓ Cross-sheet analysis found ${parsed.length} additional issue(s)`, 'highlight');
-          } else {
-            logLine('// ✓ Cross-sheet analysis — no additional issues', 'highlight');
-          }
-        }
-      } catch(e) { console.warn('Summary call error:', e); }
-    }
-
-    // ── Deduplicate, filter junk, rank ──
+    // ── Merge, deduplicate, rank, cap ──
+    const allRaw = [...pass1RFIs, ...pass2RFIs];
     const seen = new Set();
     const priorityOrder = { high: 0, medium: 1, low: 2 };
-    const junkPhrases = ['illegible','too small to read','cannot read','could not read',
-      'unclear resolution','partially legible','hard to read','image quality','low resolution','blurry'];
 
-    const finalRFIs = allRawRFIs
+    const finalRFIs = allRaw
       .filter(r => {
-        if (!r || !r.title) return false;
-        const key = r.title.toLowerCase().replace(/\s/g,'').slice(0,40);
+        if (!r || !r.title || r.title.length < 10) return false;
+        const key = r.title.toLowerCase().replace(/\s+/g,'').slice(0,50);
         if (seen.has(key)) return false;
         seen.add(key);
-        const combined = (r.title + ' ' + r.description).toLowerCase();
-        if (junkPhrases.some(p => combined.includes(p))) return false;
         return true;
       })
       .sort((a,b) => (priorityOrder[a.priority]||1) - (priorityOrder[b.priority]||1))
@@ -1666,8 +1586,10 @@ RESPOND ONLY WITH VALID JSON ARRAY:
         schedule_impact: r.schedule_impact || 'Unknown'
       }));
 
-    logLine(`// ✓ ${finalRFIs.length} RFIs found`, 'success');
-    if (finalRFIs.length === 0) logLine('// ✓ No issues found — drawing set appears well coordinated', 'success');
+    logLine(`// ✓ ${finalRFIs.length} RFI(s) confirmed`, 'success');
+    if (finalRFIs.length === 0) {
+      logLine('// Drawing set appears well coordinated — no critical issues found', 'success');
+    }
     await delay(300);
 
     STATE.rfis = finalRFIs;
@@ -1677,7 +1599,7 @@ RESPOND ONLY WITH VALID JSON ARRAY:
     document.getElementById('analysisTitle').textContent = 'ANALYSIS COMPLETE';
     document.getElementById('analysisSub').textContent = finalRFIs.length === 0
       ? `No issues found — drawing set appears well coordinated (${totalPages} pages reviewed)`
-      : `${finalRFIs.length} RFIs found from ${totalPages} pages`;
+      : `${finalRFIs.length} RFI${finalRFIs.length !== 1 ? 's' : ''} found from ${totalPages} pages`;
     document.getElementById('analysisTimeHint').style.display = 'none';
     document.getElementById('statusText').textContent = 'Complete';
     document.getElementById('statusText').style.color = '#7aab6e';
