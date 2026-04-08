@@ -1389,15 +1389,15 @@ async function startAnalysis() {
   };
 
   const PROXY_URL = 'https://buildiq-server.vercel.app/api/analyze';
-  const rfiLimit = STATE.plan === 'pro' ? 12 : 10;
+  const rfiLimit = STATE.plan === 'pro' ? 12 : 10; // max cap, not a target
   const validFiles = STATE.files.filter(f => f.ok);
   const totalPages = validFiles.reduce((a,f) => a + f.pages, 0);
 
-  // JPEG at scale 2.0 quality 0.85 — sharp, readable, fast (~2 min for 30 pages)
+  // JPEG scale 1.5, quality 0.8 — good balance of quality and speed (~2 min for 30 pages)
   const PAGE_LIMIT = 3.5 * 1024 * 1024;
   const PAGES_PER_BATCH = 2;
-  const SCALE = 2.0;
-  const QUALITY = 0.85;
+  const SCALE = 1.5;
+  const QUALITY = 0.8;
 
   pdfjsLib.GlobalWorkerOptions.workerSrc =
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -1576,12 +1576,13 @@ RULES:
 - NEVER flag a schedule as incomplete unless you see a specific blank cell with certainty
 - Every RFI must reference something visible in images or verifiable in the index
 - Do NOT write generic RFIs — every one must stop work or cause a real field problem
-- If you find fewer than 2 real issues in this batch, return only what is real
+- If you find fewer than 2 real issues in this batch, return only what is real. Return [] if nothing found.
 
 RESPOND ONLY WITH VALID JSON ARRAY:
 [{"id":"RFI-001","title":"Specific — exact issue, location, trades","priority":"high","discipline":"Architectural","page_ref":"Page X, Sheet ABC-123","location":"Exact room, grid, or area","description":"What drawing shows. What conflict or gap exists. Why it stops work or causes a problem.","spec_ref":"Exact sheet or spec from drawing or index","cost_impact":"Low (<$5K)","schedule_impact":"None"}]
 
-Priority: HIGH=safety/code/structural/stops work. MEDIUM=must resolve before trade starts. LOW=clarification only.` });
+Priority: HIGH=safety/code/structural/stops work. MEDIUM=must resolve before trade starts. LOW=clarification only.
+Return ONLY real issues you can verify. If this batch has no real issues, return an empty array []. Never invent issues to fill a quota.` });
 
       try {
         const text = await callClaude(content, conflictFirst);
