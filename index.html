@@ -1371,12 +1371,13 @@ function updateAnalyzeButton() {
 /* ═══════════════════════════════════════════
    AI ANALYSIS — TWO-PASS ENGINE v3.0
    Pass 1: Index every sheet → structured memory
-   Pass 2: Elite PM cross-sheet conflict detection
+   Pass 2: Cross-sheet conflict detection → RFIs
 ═══════════════════════════════════════════ */
 async function startAnalysis() {
   showSection('sec-results');
   STATE.rfis = [];
 
+  // Set up log
   const streamLog = document.getElementById('streamLog');
   streamLog.innerHTML = '<span class="cursor"></span>';
   const logLine = (text, cls='') => {
@@ -1389,15 +1390,14 @@ async function startAnalysis() {
   };
 
   const PROXY_URL = 'https://buildiq-server.vercel.app/api/analyze';
-  const rfiLimit = STATE.plan === 'pro' ? 12 : 10; // max cap, not a target
+  const rfiLimit = STATE.plan === 'pro' ? 12 : 10;
   const validFiles = STATE.files.filter(f => f.ok);
   const totalPages = validFiles.reduce((a,f) => a + f.pages, 0);
 
-  // JPEG scale 1.5, quality 0.8 — good balance of quality and speed (~2 min for 30 pages)
-  const PAGE_LIMIT = 3.5 * 1024 * 1024;
-  const PAGES_PER_BATCH = 2;
+  // ── Render all pages as images ──
   const SCALE = 1.5;
-  const QUALITY = 0.8;
+  const QUALITY = 0.7;
+  const BATCH_LIMIT = 3.5 * 1024 * 1024;
 
   pdfjsLib.GlobalWorkerOptions.workerSrc =
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -1405,21 +1405,6 @@ async function startAnalysis() {
   logLine('// PlanIQ Pro AI Engine v3.0 — Initialized', 'highlight');
   logLine(`// Loading ${totalPages} sheets for analysis...`);
   await delay(300);
-
-  // Render all pages as high quality JPEG
-  async function renderPage(rawFile, pageNum) {
-    try {
-      const arrayBuffer = await rawFile.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      const page = await pdf.getPage(pageNum);
-      const viewport = page.getViewport({ scale: SCALE });
-      const canvas = document.createElement('canvas');
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
-      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-      return canvas.toDataURL('image/jpeg', QUALITY).split(',')[1];
-    } catch(e) { return null; }
-  }
 
   const allPages = [];
   for (const f of validFiles) {
@@ -1430,37 +1415,46 @@ async function startAnalysis() {
       const pagesToRender = Math.min(pdf.numPages, STATE.pagesMax);
       logLine(`// Rendering ${pagesToRender} pages from ${f.name}...`, 'highlight');
       for (let i = 1; i <= pagesToRender; i++) {
-        const imgData = await renderPage(f.rawFile, i);
+        const page = await pdf.getPage(i);
+        const viewport = page.getViewport({ scale: SCALE });
+        const canvas = document.createElement('canvas');
+        canvas.width = viewport.width;
+        canvas.height = viewport.height;
+        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+        const imgData = canvas.toDataURL('image/jpeg', QUALITY).split(',')[1];
         const pageInfo = f.pageData?.find(p => p.pageNum === i);
-        if (imgData) allPages.push({
+        allPages.push({
           pageNum: i,
           sheetNum: pageInfo?.sheetNum || `Page ${i}`,
           discipline: pageInfo?.discipline || 'Unknown',
+          text: pageInfo?.text || '',
           imgData
         });
       }
     } catch(e) { console.warn('Render error:', e); }
   }
 
-  logLine(`// ✓ ${allPages.length} pages rendered at full quality`, 'highlight');
+  logLine(`// ✓ ${allPages.length} pages rendered`, 'highlight');
   await delay(200);
 
-  // Split pages into size-safe batches
-  function makeBatches(pages, maxPer, maxBytes) {
-    const batches = [], batch = [];
-    let cur = [], size = 0;
+  // Helper: split pages into size-safe batches
+  function makeBatches(pages, maxPerBatch, maxBytes) {
+    const batches = [];
+    let batch = [], size = 0;
     for (const pg of pages) {
       const pgSize = pg.imgData.length * 0.75;
-      if (cur.length >= maxPer || (size + pgSize > maxBytes && cur.length > 0)) {
-        batches.push(cur); cur = []; size = 0;
+      if (batch.length >= maxPerBatch || (size + pgSize > maxBytes && batch.length > 0)) {
+        batches.push(batch);
+        batch = []; size = 0;
       }
-      cur.push(pg); size += pgSize;
+      batch.push(pg);
+      size += pgSize;
     }
-    if (cur.length > 0) batches.push(cur);
+    if (batch.length > 0) batches.push(batch);
     return batches;
   }
 
-  // Call Claude via proxy
+  // Helper: call Claude via proxy
   async function callClaude(content, useUserId) {
     const resp = await fetch(PROXY_URL, {
       method: 'POST',
@@ -1476,17 +1470,6 @@ async function startAnalysis() {
     return data.content?.[0]?.text || '';
   }
 
-  // Parse JSON array from Claude response
-  function parseRFIs(text) {
-    try {
-      let clean = text.replace(/```json/gi,'').replace(/```/g,'').trim();
-      const match = clean.match(/\[[\s\S]*\]/);
-      if (!match) return [];
-      const parsed = JSON.parse(match[0].replace(/,\s*([}\]])/g, '$1'));
-      return Array.isArray(parsed) ? parsed : [];
-    } catch(e) { return []; }
-  }
-
   try {
     // ══════════════════════════════════════════
     // PASS 1 — INDEX: Build structured memory of entire drawing set
@@ -1494,126 +1477,169 @@ async function startAnalysis() {
     logLine('// PASS 1 — Indexing drawing set...', 'highlight');
     await delay(200);
 
-    const indexBatches = makeBatches(allPages, PAGES_PER_BATCH, PAGE_LIMIT);
-    const sheetIndex = [];
+    const indexBatches = makeBatches(allPages, 4, BATCH_LIMIT);
+    const sheetIndex = []; // structured memory of every sheet
     let firstCall = true;
 
     for (let b = 0; b < indexBatches.length; b++) {
       const batch = indexBatches[b];
       const content = [];
+
       for (const pg of batch) {
         content.push({ type: 'text', text: `--- Page ${pg.pageNum} | Sheet: ${pg.sheetNum} | Discipline: ${pg.discipline} ---` });
         content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: pg.imgData } });
       }
-      content.push({ type: 'text', text: `Index these construction drawing pages. For each page return a JSON array:
-[{"page":<num>,"sheet":"<sheet number>","discipline":"<Architectural|Structural|Mechanical|Electrical|Plumbing|Civil|General>","title":"<sheet title>","contains":["key elements: schedules, details, plans, sections, notes"],"references":["other sheets called out on this sheet"],"key_info":"<critical dimensions, elevations, specs in 1-2 sentences>","flags":["anything incomplete, placeholder, or unclear"]}]
-RESPOND ONLY WITH VALID JSON ARRAY. Be precise — only report what you can see.` });
+
+      content.push({ type: 'text', text: `You are indexing a construction drawing set. For each page shown, extract structured information.
+
+RESPOND ONLY WITH A VALID JSON ARRAY. No markdown, no text before or after.
+
+For each page return:
+{
+  "page": <number>,
+  "sheet": "<sheet number visible in title block>",
+  "discipline": "<Architectural|Structural|Mechanical|Electrical|Plumbing|Civil|General>",
+  "title": "<sheet title visible in title block>",
+  "contains": ["list of key elements present: schedules, details, plans, sections, notes, etc"],
+  "references": ["list of other sheets or details explicitly called out on this sheet"],
+  "key_info": "<critical dimensions, elevations, specifications, or notes in 2-3 sentences>",
+  "missing_or_unclear": ["anything that appears incomplete, illegible, or missing from this sheet"]
+}
+
+Be precise. Only report what you can actually see. Do not guess.` });
 
       try {
         const text = await callClaude(content, firstCall);
         firstCall = false;
-        const parsed = parseRFIs(text);
-        if (parsed.length > 0) sheetIndex.push(...parsed);
+        let clean = text.replace(/```json/gi,'').replace(/```/g,'').trim();
+        const match = clean.match(/\[[\s\S]*\]/);
+        if (match) {
+          const parsed = JSON.parse(match[0].replace(/,\s*([}\]])/g, '$1'));
+          if (Array.isArray(parsed)) sheetIndex.push(...parsed);
+        }
       } catch(e) { console.warn('Index batch error:', e); }
 
-      logLine(`// ✓ Indexed ${b+1}/${indexBatches.length} (${batch.map(p=>p.sheetNum).join(', ')})`, 'highlight');
-      await delay(100);
+      logLine(`// ✓ Indexed batch ${b+1}/${indexBatches.length} (${batch.map(p=>p.sheetNum).join(', ')})`, 'highlight');
+      await delay(150);
     }
 
     logLine(`// ✓ Sheet index complete — ${sheetIndex.length} sheets catalogued`, 'highlight');
     await delay(200);
 
     // ══════════════════════════════════════════
-    // PASS 2 — ELITE PM CONFLICT DETECTION
+    // PASS 2 — CONFLICT DETECTION: Use index + visuals to find real RFIs
     // ══════════════════════════════════════════
-    logLine('// PASS 2 — Analyzing for conflicts...', 'highlight');
+    logLine('// PASS 2 — Cross-referencing sheets for conflicts...', 'highlight');
     await delay(200);
-    logLine('// Checking cross-references and discipline coordination...');
-    await delay(150);
-    logLine('// Applying construction logic and code compliance checks...');
-    await delay(150);
+
+    logLine('// Checking sheet cross-references...');
+    await delay(200);
+    logLine('// Comparing architectural vs structural vs MEP...');
+    await delay(200);
+    logLine('// Verifying schedules, dimensions, and details...');
+    await delay(200);
+    logLine('// Applying Florida Building Code compliance checks...');
+    await delay(200);
 
     const indexSummary = JSON.stringify(sheetIndex, null, 2);
-    const conflictBatches = makeBatches(allPages, PAGES_PER_BATCH, PAGE_LIMIT);
+
+    // Send ALL pages in batches for conflict analysis, using the index as context
+    const conflictBatches = makeBatches(allPages, 4, BATCH_LIMIT);
     const allRawRFIs = [];
-    let conflictFirst = true;
+    let conflictCallFirst = true;
 
     for (let b = 0; b < conflictBatches.length; b++) {
       const batch = conflictBatches[b];
       const content = [];
+
       for (const pg of batch) {
         content.push({ type: 'text', text: `--- Page ${pg.pageNum} | Sheet: ${pg.sheetNum} | Discipline: ${pg.discipline} ---` });
         content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: pg.imgData } });
       }
-      content.push({ type: 'text', text: `You are a Senior Project Manager with 30 years of experience. You think like a PM in the field — you know what stops work, causes change orders, and gets missed between disciplines.
 
-COMPLETE DRAWING SET INDEX:
+      content.push({ type: 'text', text: `You are a Senior Project Manager with 30 years of field experience. You have indexed the ENTIRE drawing set. Here is the complete index:
+
+DRAWING SET INDEX (ALL SHEETS):
 ${indexSummary}
 
-Analyze the pages above. Use the index for full project context. Find REAL issues that cause field problems, cost overruns, or delays.
+Run this VERIFICATION CHECKLIST on the pages shown. Only generate an RFI when the answer is NO or CONFLICT.
 
-HOW AN ELITE PM FINDS RFIs:
-1. Can a contractor build this from these drawings alone?
-2. What is missing between disciplines?
-3. What is called out but NOT in the index?
-4. What will cause a physical conflict in the field?
-5. What code issues are present?
+CHECKLIST — CHECK EACH ITEM:
 
-THE MOST COMMON REAL RFIs — LOOK FOR THESE:
-A) MISSING CROSS-REFERENCES: Sheet calls out a detail, section, or drawing NOT listed in the index
-B) DIMENSION CONFLICTS: Dimensions on plan do not match elevations, sections, or other sheets
-C) STRUCTURAL vs MEP CONFLICTS: Beams, joists, or walls conflict with mechanical/electrical/plumbing routing
-D) UNDEFINED CONDITIONS: Wall type not in legend, door not in schedule, equipment shown but unspecified
-E) MISSING STRUCTURAL SUPPORT: Cantilevered elements, heavy equipment, or pools with no structural detail in index
-F) ELECTRICAL COORDINATION: Panel location undefined, circuits without home runs, equipment voltage mismatch
-G) CODE COMPLIANCE: Egress width, ADA clearances, fire ratings on rated assemblies, occupancy loads
-H) CIVIL/ARCH CONFLICTS: Finish floor elevation conflicts with civil grading or survey
-I) SPECIFICATION GAPS: Work noted as by contractor or by owner with no specification provided
-J) COORDINATION GAPS: Work by others not coordinated between sheets
+1. CROSS-REFERENCES: Find every callout saying "see sheet X", "see detail X/Y", "refer to structural", "refer to civil". Check the index — does that sheet/detail exist? If NO → RFI.
 
-RULES:
-- Use the index — if something EXISTS on another sheet, do NOT flag it as missing
-- NEVER flag a schedule as incomplete unless you see a specific blank cell with certainty
-- Every RFI must reference something visible in images or verifiable in the index
-- Do NOT write generic RFIs — every one must stop work or cause a real field problem
-- If you find fewer than 2 real issues in this batch, return only what is real. Return [] if nothing found.
+2. DOOR & WINDOW TAGS: Find every door and window tag on these pages. Is there a schedule in the index containing this tag? If a tag exists but no schedule anywhere in index → RFI.
 
-RESPOND ONLY WITH VALID JSON ARRAY:
-[{"id":"RFI-001","title":"Specific — exact issue, location, trades","priority":"high","discipline":"Architectural","page_ref":"Page X, Sheet ABC-123","location":"Exact room, grid, or area","description":"What drawing shows. What conflict or gap exists. Why it stops work or causes a problem.","spec_ref":"Exact sheet or spec from drawing or index","cost_impact":"Low (<$5K)","schedule_impact":"None"}]
+3. EQUIPMENT & FIXTURES: Find every piece of equipment shown. Is it specified or scheduled anywhere in the index? If shown but nowhere specified → RFI.
 
-Priority: HIGH=safety/code/structural/stops work. MEDIUM=must resolve before trade starts. LOW=clarification only.
-Return ONLY real issues you can verify. If this batch has no real issues, return an empty array []. Never invent issues to fill a quota.` });
+4. WALL TYPES: Find every wall type indicator. Is it defined in a wall legend or schedule in the index? If used but not defined → RFI.
+
+5. STRUCTURAL SUPPORT: Is any cantilevered element, heavy equipment, pool, or large opening shown without a structural detail in the index? If YES → RFI.
+
+6. ELECTRICAL PANEL LOCATION: Does any sheet say "panel location by field" or "to be determined"? If YES → RFI.
+
+7. DIMENSION COORDINATION: Do key dimensions on this sheet clearly conflict with other sheets in the index? If YES → RFI.
+
+8. CODE COMPLIANCE: Is any egress path blocked, ADA clearance clearly violated, or fire-rated assembly missing a rating? If YES → RFI.
+
+9. SPECIFICATION GAPS: Does any note say "by owner", "by contractor", or "NIC" for something that needs a spec? If no spec in index → RFI.
+
+10. CIVIL/ARCH COORDINATION: Does finish floor elevation clearly conflict with civil or survey in the index? If YES → RFI.
+
+STRICT RULES:
+- ONLY generate an RFI when you VERIFIED the answer is NO or CONFLICT
+- Do NOT generate RFIs for things that exist somewhere in the index
+- Do NOT generate RFIs about image quality or illegible text
+- Return empty array [] if no checklist items fail on these pages
+- NO minimum number of RFIs — accuracy matters more than quantity
+
+RESPOND ONLY WITH VALID JSON ARRAY (return [] if nothing found):
+[{"id":"RFI-001","title":"Specific — what failed the checklist, exact location","priority":"high","discipline":"Architectural","page_ref":"Page X, Sheet ABC-123","location":"Exact room, grid, or area","description":"What the drawing shows. Which checklist item failed. What is missing or conflicting. Why it causes a field problem.","spec_ref":"Exact sheet or note reference","cost_impact":"Low (<$5K)","schedule_impact":"None"}]
+
+Priority: HIGH=stops work/safety/code. MEDIUM=must resolve before trade starts. LOW=clarification needed.` });
 
       try {
-        const text = await callClaude(content, conflictFirst);
-        conflictFirst = false;
-        const parsed = parseRFIs(text);
-        if (parsed.length > 0) allRawRFIs.push(...parsed);
+        const text = await callClaude(content, conflictCallFirst);
+        conflictCallFirst = false;
+        let clean = text.replace(/```json/gi,'').replace(/```/g,'').trim();
+        const match = clean.match(/\[[\s\S]*\]/);
+        if (match) {
+          const parsed = JSON.parse(match[0].replace(/,\s*([}\]])/g, '$1'));
+          if (Array.isArray(parsed)) allRawRFIs.push(...parsed);
+        }
       } catch(e) { console.warn('Conflict batch error:', e); }
 
-      logLine(`// ✓ Analyzed batch ${b+1}/${conflictBatches.length}`, 'highlight');
-      await delay(100);
+      logLine(`// ✓ Conflicts analyzed: batch ${b+1}/${conflictBatches.length}`, 'highlight');
+      await delay(150);
     }
 
-    // Deduplicate, filter junk, rank by priority
+    // ── Deduplicate, filter junk, and rank ──
     const seen = new Set();
     const priorityOrder = { high: 0, medium: 1, low: 2 };
-    const junkPhrases = ['illegible','too small to read','cannot read','could not read',
-      'unclear resolution','partially legible','hard to read','image quality','low resolution'];
+
+    // Words that indicate the AI is complaining about image quality, not real issues
+    const junkPhrases = [
+      'illegible', 'too small to read', 'cannot read', 'could not read',
+      'unclear resolution', 'resolution', 'partially legible', 'hard to read',
+      'difficult to read', 'not clearly visible', 'cannot be determined from',
+      'image quality', 'low resolution', 'blurry'
+    ];
 
     const finalRFIs = allRawRFIs
       .filter(r => {
         if (!r || !r.title) return false;
-        const key = r.title.toLowerCase().replace(/\s/g,'').slice(0,40);
+        // Remove duplicates
+        const key = r.title.toLowerCase().replace(/\s/g,'').slice(0, 40);
         if (seen.has(key)) return false;
         seen.add(key);
+        // Remove image quality complaints
         const combined = (r.title + ' ' + r.description).toLowerCase();
-        if (junkPhrases.some(p => combined.includes(p))) return false;
+        if (junkPhrases.some(phrase => combined.includes(phrase))) return false;
         return true;
       })
-      .sort((a,b) => (priorityOrder[a.priority]||1) - (priorityOrder[b.priority]||1))
+      .sort((a, b) => (priorityOrder[a.priority] || 1) - (priorityOrder[b.priority] || 1))
       .slice(0, rfiLimit)
-      .map((r,i) => ({
+      .map((r, i) => ({
         id: `RFI-${String(i+1).padStart(3,'0')}`,
         title: r.title || 'Untitled RFI',
         priority: ['high','medium','low'].includes(r.priority) ? r.priority : 'medium',
@@ -1629,14 +1655,14 @@ Return ONLY real issues you can verify. If this batch has no real issues, return
     logLine(`// ✓ ${finalRFIs.length} RFIs identified and ranked`, 'success');
     await delay(300);
 
-    if (finalRFIs.length === 0) throw new Error('No RFIs generated');
+    if (finalRFIs.length === 0) throw new Error('No RFIs generated — check console for errors');
 
     STATE.rfis = finalRFIs;
-    STATE.uploadsUsed = Math.min(STATE.uploadsUsed + 1, STATE.uploadsMax);
-    updateQuota();
 
-    document.getElementById('analysisTitle').textContent = 'ANALYSIS COMPLETE';
-    document.getElementById('analysisSub').textContent = `${finalRFIs.length} RFIs generated from ${totalPages} pages`;
+    // Update UI
+    document.getElementById('analysisTitle').textContent = 'ANALYSIS\nCOMPLETE';
+    document.getElementById('analysisSub').textContent =
+      `${finalRFIs.length} RFIs generated from ${totalPages} pages`;
     document.getElementById('analysisTimeHint').style.display = 'none';
     document.getElementById('statusText').textContent = 'Complete';
     document.getElementById('statusText').style.color = '#7aab6e';
@@ -1647,6 +1673,11 @@ Return ONLY real issues you can verify. If this batch has no real issues, return
     document.getElementById('exportCount').textContent = finalRFIs.length + ' RFIs';
     document.getElementById('pushCount').textContent = finalRFIs.length;
     document.getElementById('exportBar').style.display = 'flex';
+
+    // Update uploads used display
+    STATE.uploadsUsed = Math.min(STATE.uploadsUsed + 1, STATE.uploadsMax);
+    updateQuota();
+
     const backBtn = document.getElementById('backToHomeBtn');
     if (backBtn) backBtn.style.display = 'inline-block';
 
@@ -1659,7 +1690,7 @@ Return ONLY real issues you can verify. If this batch has no real issues, return
     STATE.rfis = demoRFIs;
     logLine(`// ✓ ${demoRFIs.length} demo RFIs loaded`, 'success');
     document.getElementById('analysisTitle').innerHTML = 'DEMO<br>RFIS LOADED';
-    document.getElementById('analysisSub').textContent = 'Showing sample RFIs';
+    document.getElementById('analysisSub').textContent = 'Showing sample RFIs (add your API key to go live)';
     document.getElementById('statusText').textContent = 'Demo Mode';
     renderRFIs(demoRFIs);
     document.getElementById('exportCount').textContent = demoRFIs.length + ' RFIs';
@@ -1667,6 +1698,8 @@ Return ONLY real issues you can verify. If this batch has no real issues, return
     document.getElementById('exportBar').style.display = 'flex';
   }
 }
+
+
 
 /* ═══════════════════════════════════════════
    RENDER RFI CARDS
