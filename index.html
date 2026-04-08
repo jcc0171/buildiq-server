@@ -1396,7 +1396,7 @@ async function startAnalysis() {
 
   // ── Render all pages as images ──
   const SCALE = 1.5;
-  const QUALITY = 0.7;
+  const QUALITY = 0.85;
   const BATCH_LIMIT = 3.5 * 1024 * 1024;
 
   pdfjsLib.GlobalWorkerOptions.workerSrc =
@@ -1557,46 +1557,46 @@ Be precise. Only report what you can actually see. Do not guess.` });
         content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: pg.imgData } });
       }
 
-      content.push({ type: 'text', text: `You are a Senior Project Manager with 30 years of field experience. You have indexed the ENTIRE drawing set. Here is the complete index:
+      content.push({ type: 'text', text: `You are a Senior Project Manager with 30 years of experience on commercial and residential construction projects. You read plans the way a real PM does — looking for what will cause problems in the field, not hunting for perfection.
+
+You have already indexed the ENTIRE drawing set. Here is the complete index:
 
 DRAWING SET INDEX (ALL SHEETS):
 ${indexSummary}
 
-Run this VERIFICATION CHECKLIST on the pages shown. Only generate an RFI when the answer is NO or CONFLICT.
+Now study the pages above carefully. Read them like you are about to hand them to a contractor tomorrow. Ask yourself:
 
-CHECKLIST — CHECK EACH ITEM:
+- Can a contractor actually build this from what is shown?
+- What questions will they ask before they can start?
+- What is called out on this page that doesn't exist in the index?
+- What conflicts between trades will cause problems in the field?
+- What is missing that would normally be expected on this type of project?
+- What code requirements are clearly not addressed?
 
-1. CROSS-REFERENCES: Find every callout saying "see sheet X", "see detail X/Y", "refer to structural", "refer to civil". Check the index — does that sheet/detail exist? If NO → RFI.
+THINGS A REAL PM LOOKS FOR:
+- A sheet says "see detail 3/A5" but A5 is not in the index → real RFI
+- Structural sheet shows a beam but mechanical shows ductwork in the same space → real RFI  
+- Door schedule tag on plan but no door schedule anywhere in the index → real RFI
+- Electrical panel location says "by field" or "TBD" → real RFI
+- Equipment shown with no specification or schedule in the index → real RFI
+- Finish floor elevation doesn't coordinate with civil/survey → real RFI
+- Wall type shown but not defined in any legend in the index → real RFI
+- "By owner" or "NIC" note on something that needs coordination → real RFI
+- Egress path clearly blocked or ADA clearance obviously violated → real RFI
+- Cantilevered element or heavy load with no structural reference → real RFI
+- Referenced specification section not included in the drawing set → real RFI
+- Inconsistent dimensions between plan and elevation on same element → real RFI
 
-2. DOOR & WINDOW TAGS: Find every door and window tag on these pages. Is there a schedule in the index containing this tag? If a tag exists but no schedule anywhere in index → RFI.
+USE THE INDEX — if something exists on another sheet, don't flag it. The index is your memory of the whole set.
 
-3. EQUIPMENT & FIXTURES: Find every piece of equipment shown. Is it specified or scheduled anywhere in the index? If shown but nowhere specified → RFI.
+BE REASONABLE — a well-coordinated set might produce 2-3 RFIs from a batch. A poorly coordinated set might produce 4-5. Both are fine. Do not invent issues to fill a number.
 
-4. WALL TYPES: Find every wall type indicator. Is it defined in a wall legend or schedule in the index? If used but not defined → RFI.
+DO NOT flag something just because text is small or a schedule has many columns. Only flag it if a specific piece of required information is genuinely absent.
 
-5. STRUCTURAL SUPPORT: Is any cantilevered element, heavy equipment, pool, or large opening shown without a structural detail in the index? If YES → RFI.
+RESPOND ONLY WITH VALID JSON ARRAY (return [] if this batch is clean):
+[{"id":"RFI-001","title":"Clear title — what is missing or conflicting and where","priority":"high","discipline":"Architectural","page_ref":"Page X, Sheet ABC-123","location":"Specific room, grid line, or area","description":"What the drawing shows. What is missing, conflicting, or unclear. Why a contractor cannot proceed without resolution.","spec_ref":"Sheet or note reference from drawing or index","cost_impact":"Low (<$5K)","schedule_impact":"None"}]
 
-6. ELECTRICAL PANEL LOCATION: Does any sheet say "panel location by field" or "to be determined"? If YES → RFI.
-
-7. DIMENSION COORDINATION: Do key dimensions on this sheet clearly conflict with other sheets in the index? If YES → RFI.
-
-8. CODE COMPLIANCE: Is any egress path blocked, ADA clearance clearly violated, or fire-rated assembly missing a rating? If YES → RFI.
-
-9. SPECIFICATION GAPS: Does any note say "by owner", "by contractor", or "NIC" for something that needs a spec? If no spec in index → RFI.
-
-10. CIVIL/ARCH COORDINATION: Does finish floor elevation clearly conflict with civil or survey in the index? If YES → RFI.
-
-STRICT RULES:
-- ONLY generate an RFI when you VERIFIED the answer is NO or CONFLICT
-- Do NOT generate RFIs for things that exist somewhere in the index
-- Do NOT generate RFIs about image quality or illegible text
-- Return empty array [] if no checklist items fail on these pages
-- NO minimum number of RFIs — accuracy matters more than quantity
-
-RESPOND ONLY WITH VALID JSON ARRAY (return [] if nothing found):
-[{"id":"RFI-001","title":"Specific — what failed the checklist, exact location","priority":"high","discipline":"Architectural","page_ref":"Page X, Sheet ABC-123","location":"Exact room, grid, or area","description":"What the drawing shows. Which checklist item failed. What is missing or conflicting. Why it causes a field problem.","spec_ref":"Exact sheet or note reference","cost_impact":"Low (<$5K)","schedule_impact":"None"}]
-
-Priority: HIGH=stops work/safety/code. MEDIUM=must resolve before trade starts. LOW=clarification needed.` });
+Priority: HIGH = will stop work or cause safety/code issue. MEDIUM = must resolve before that trade starts. LOW = needs clarification but work can proceed temporarily.` });
 
       try {
         const text = await callClaude(content, conflictCallFirst);
@@ -1653,16 +1653,16 @@ Priority: HIGH=stops work/safety/code. MEDIUM=must resolve before trade starts. 
       }));
 
     logLine(`// ✓ ${finalRFIs.length} RFIs identified and ranked`, 'success');
+    if (finalRFIs.length === 0) logLine('// ✓ No issues found — drawing set appears well coordinated', 'success');
     await delay(300);
-
-    if (finalRFIs.length === 0) throw new Error('No RFIs generated — check console for errors');
 
     STATE.rfis = finalRFIs;
 
     // Update UI
-    document.getElementById('analysisTitle').textContent = 'ANALYSIS\nCOMPLETE';
-    document.getElementById('analysisSub').textContent =
-      `${finalRFIs.length} RFIs generated from ${totalPages} pages`;
+    document.getElementById('analysisTitle').textContent = 'ANALYSIS COMPLETE';
+    document.getElementById('analysisSub').textContent = finalRFIs.length === 0
+      ? `No issues found — drawing set appears well coordinated (${totalPages} pages reviewed)`
+      : `${finalRFIs.length} RFIs generated from ${totalPages} pages`;
     document.getElementById('analysisTimeHint').style.display = 'none';
     document.getElementById('statusText').textContent = 'Complete';
     document.getElementById('statusText').style.color = '#7aab6e';
