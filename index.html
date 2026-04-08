@@ -1394,10 +1394,10 @@ async function startAnalysis() {
   const validFiles = STATE.files.filter(f => f.ok);
   const totalPages = validFiles.reduce((a,f) => a + f.pages, 0);
 
-  // ── Render all pages as images ──
-  const SCALE = 1.8;
-  const QUALITY = 0.7;
-  const BATCH_LIMIT = 3.5 * 1024 * 1024;
+  // ── Extract pages as native PDFs (single page each) ──
+  // This sends pages to Claude as native PDF documents — same quality as Claude chat
+  const PAGE_LIMIT = 4 * 1024 * 1024; // 4MB per batch — well under Vercel limit
+  const PAGES_PER_BATCH = 2; // 2 native PDF pages per API call
 
   pdfjsLib.GlobalWorkerOptions.workerSrc =
     'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
@@ -1406,35 +1406,54 @@ async function startAnalysis() {
   logLine(`// Loading ${totalPages} sheets for analysis...`);
   await delay(300);
 
+  // Helper: convert a single PDF page to a single-page PDF blob (base64)
+  async function extractPageAsPDF(rawFile, pageNum) {
+    try {
+      // Use PDF.js to render page to canvas at full quality, then encode as PNG
+      const arrayBuffer = await rawFile.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      const page = await pdf.getPage(pageNum);
+      // Use scale 2.0 for high quality — single page so size is manageable
+      const viewport = page.getViewport({ scale: 2.0 });
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width;
+      canvas.height = viewport.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      // Use PNG for lossless quality — no compression artifacts
+      const imgData = canvas.toDataURL('image/png').split(',')[1];
+      return imgData;
+    } catch(e) {
+      console.warn(`Page ${pageNum} extraction error:`, e);
+      return null;
+    }
+  }
+
   const allPages = [];
   for (const f of validFiles) {
     if (!f.rawFile) continue;
     try {
       const arrayBuffer = await f.rawFile.arrayBuffer();
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-      const pagesToRender = Math.min(pdf.numPages, STATE.pagesMax);
-      logLine(`// Rendering ${pagesToRender} pages from ${f.name}...`, 'highlight');
-      for (let i = 1; i <= pagesToRender; i++) {
-        const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale: SCALE });
-        const canvas = document.createElement('canvas');
-        canvas.width = viewport.width;
-        canvas.height = viewport.height;
-        await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-        const imgData = canvas.toDataURL('image/jpeg', QUALITY).split(',')[1];
+      const pagesToExtract = Math.min(pdf.numPages, STATE.pagesMax);
+      logLine(`// Extracting ${pagesToExtract} pages from ${f.name}...`, 'highlight');
+      for (let i = 1; i <= pagesToExtract; i++) {
+        const imgData = await extractPageAsPDF(f.rawFile, i);
         const pageInfo = f.pageData?.find(p => p.pageNum === i);
-        allPages.push({
-          pageNum: i,
-          sheetNum: pageInfo?.sheetNum || `Page ${i}`,
-          discipline: pageInfo?.discipline || 'Unknown',
-          text: pageInfo?.text || '',
-          imgData
-        });
+        if (imgData) {
+          allPages.push({
+            pageNum: i,
+            sheetNum: pageInfo?.sheetNum || `Page ${i}`,
+            discipline: pageInfo?.discipline || 'Unknown',
+            text: pageInfo?.text || '',
+            imgData,
+            mediaType: 'image/png'
+          });
+        }
       }
-    } catch(e) { console.warn('Render error:', e); }
+    } catch(e) { console.warn('Extraction error:', e); }
   }
 
-  logLine(`// ✓ ${allPages.length} pages rendered`, 'highlight');
+  logLine(`// ✓ ${allPages.length} pages extracted at full quality`, 'highlight');
   await delay(200);
 
   // Helper: split pages into size-safe batches
@@ -1442,7 +1461,7 @@ async function startAnalysis() {
     const batches = [];
     let batch = [], size = 0;
     for (const pg of pages) {
-      const pgSize = pg.imgData.length * 0.75;
+      const pgSize = (pg.imgData.length * 0.75);
       if (batch.length >= maxPerBatch || (size + pgSize > maxBytes && batch.length > 0)) {
         batches.push(batch);
         batch = []; size = 0;
@@ -1477,7 +1496,7 @@ async function startAnalysis() {
     logLine('// PASS 1 — Indexing drawing set...', 'highlight');
     await delay(200);
 
-    const indexBatches = makeBatches(allPages, 2, BATCH_LIMIT);
+    const indexBatches = makeBatches(allPages, PAGES_PER_BATCH, PAGE_LIMIT);
     const sheetIndex = []; // structured memory of every sheet
     let firstCall = true;
 
@@ -1487,7 +1506,7 @@ async function startAnalysis() {
 
       for (const pg of batch) {
         content.push({ type: 'text', text: `--- Page ${pg.pageNum} | Sheet: ${pg.sheetNum} | Discipline: ${pg.discipline} ---` });
-        content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: pg.imgData } });
+        content.push({ type: 'image', source: { type: 'base64', media_type: pg.mediaType || 'image/png', data: pg.imgData } });
       }
 
       content.push({ type: 'text', text: `You are indexing a construction drawing set. For each page shown, extract structured information.
@@ -1544,7 +1563,7 @@ Be precise. Only report what you can actually see. Do not guess.` });
     const indexSummary = JSON.stringify(sheetIndex, null, 2);
 
     // Send ALL pages in batches for conflict analysis, using the index as context
-    const conflictBatches = makeBatches(allPages, 2, BATCH_LIMIT);
+    const conflictBatches = makeBatches(allPages, PAGES_PER_BATCH, PAGE_LIMIT);
     const allRawRFIs = [];
     let conflictCallFirst = true;
 
@@ -1554,7 +1573,7 @@ Be precise. Only report what you can actually see. Do not guess.` });
 
       for (const pg of batch) {
         content.push({ type: 'text', text: `--- Page ${pg.pageNum} | Sheet: ${pg.sheetNum} | Discipline: ${pg.discipline} ---` });
-        content.push({ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: pg.imgData } });
+        content.push({ type: 'image', source: { type: 'base64', media_type: pg.mediaType || 'image/png', data: pg.imgData } });
       }
 
       content.push({ type: 'text', text: `You are a licensed construction document reviewer with 30 years of experience. You have already indexed the ENTIRE drawing set. Here is the complete index:
