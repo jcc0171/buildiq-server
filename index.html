@@ -1277,7 +1277,7 @@ async function processFiles(newFiles) {
       // Extract text from each page for metadata
       // Pages with thin text (<300 chars) are flagged for image rendering during analysis
       // This catches schedule sheets, table-heavy pages, and image-based drawings
-      const TEXT_THRESHOLD = 300;
+      const TEXT_THRESHOLD = 800; // Schedule/table sheets often have jumbled but sparse text
 
       for (let i = 1; i <= Math.min(pageCount, STATE.pagesMax); i++) {
         const page = await pdf.getPage(i);
@@ -1429,6 +1429,10 @@ async function startAnalysis() {
 
     // Render thin-text pages as images (schedules, tables)
     const thinPages = f.pageData.filter(pg => pg.needsImage);
+    if (thinPages.length > 0) {
+      logLine(`// Detected ${thinPages.length} schedule/table page(s) in ${f.name} — rendering...`, 'highlight');
+      await delay(50);
+    }
     if (thinPages.length > 0 && f.rawFile && scheduleImages.length < MAX_SCHEDULE_IMAGES) {
       try {
         const arrayBuffer = await f.rawFile.arrayBuffer();
@@ -1525,18 +1529,28 @@ WHAT MAKES A REAL RFI:
 - Underground or concealed work where existing conditions are unknown and must be confirmed
 
 WHAT IS NOT AN RFI:
-- Observations that general plans don't show mechanical details (that is expected and normal)
-- Generic statements about needing coordination without a specific conflict
-- Items already resolved or noted as "coordinate with contractor"
+- Observations that general plans don't show mechanical details (that is normal and expected)
+- Generic statements about needing coordination without a specific, identifiable conflict
+- Items already resolved or explicitly noted as contractor responsibility
 - Repeating the same issue across multiple sheets
+
+CALIBRATION — READ THIS CAREFULLY:
+A real-world multi-discipline MEP renovation drawing set of 15+ pages will almost always contain legitimate RFIs. If you are finding zero issues, you are being too conservative. Common real RFIs in renovation sets include:
+- Equipment tags on plans that don't match the schedule (e.g. AHU-3.1 on M101 vs schedule on M600)
+- Electrical panel schedules showing loads that don't reconcile with equipment schedules
+- Demolition plans removing equipment whose replacement is not shown on renovation plans
+- Underground or existing conditions referenced without as-built verification noted
+- Fire/smoke damper requirements at rated walls where new ductwork penetrates
+- BAS/controls scope described in sequences but not reflected in electrical or mechanical plans
+- Temporary AC or phasing requirements noted in general notes but not detailed anywhere
 
 RULES:
 1. Every RFI must cite the specific sheet number (e.g. M101, E601, G101) where the issue appears
 2. Write descriptions as a PM would — specific, direct, and actionable
-3. Only flag issues you can verify from the text provided
-4. Return UP TO ${rfiMax} RFIs maximum — but return FEWER if there are fewer real issues
-5. If the drawings are well-coordinated, return an empty array []
-6. Do NOT pad with weak RFIs to hit a number — quality is the only measure
+3. Only flag issues you can verify from the text or images provided
+4. Return UP TO ${rfiMax} RFIs maximum — but return FEWER if there are genuinely fewer real issues
+5. A response of zero RFIs on a multi-discipline renovation set is almost certainly wrong — look harder
+6. Do NOT pad with weak observations — but do NOT leave real issues on the table either
 
 RESPOND ONLY WITH A VALID JSON ARRAY — no other text, no markdown:
 [
