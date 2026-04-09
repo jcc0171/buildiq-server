@@ -1275,6 +1275,10 @@ async function processFiles(newFiles) {
       }
 
       // Extract text from each page for metadata
+      // Pages with thin text (<300 chars) are flagged for image rendering during analysis
+      // This catches schedule sheets, table-heavy pages, and image-based drawings
+      const TEXT_THRESHOLD = 300;
+
       for (let i = 1; i <= Math.min(pageCount, STATE.pagesMax); i++) {
         const page = await pdf.getPage(i);
         const content = await page.getTextContent();
@@ -1292,8 +1296,11 @@ async function processFiles(newFiles) {
         else if (pt.includes('civil') || pt.includes('grading') || pt.includes('drainage') || pt.includes('utility')) discipline = 'Civil';
         else if (pt.includes('fire') || pt.includes('sprinkler') || pt.includes('suppression')) discipline = 'Fire Protection';
 
-        pageData.push({ pageNum: i, sheetNum, discipline, text: pageText });
-        extractedText += `\n\n=== PAGE ${i} | SHEET: ${sheetNum} | DISCIPLINE: ${discipline} ===\n${pageText}`;
+        // Flag pages where text is thin — likely schedules, tables, or image-heavy sheets
+        const needsImage = pageText.length < TEXT_THRESHOLD;
+
+        pageData.push({ pageNum: i, sheetNum, discipline, text: pageText, needsImage });
+        extractedText += `\n\n=== PAGE ${i} | SHEET: ${sheetNum} | DISCIPLINE: ${discipline}${needsImage ? ' | SCHEDULE/TABLE PAGE' : ''} ===\n${pageText}`;
       }
 
     } catch(err) {
@@ -1399,31 +1406,69 @@ async function startAnalysis() {
   logLine(`// Reading ${totalPages} sheets...`);
   await delay(200);
 
-  // ── Build full text corpus from already-extracted page text ──
-  // PDF.js already extracted this during upload — no re-rendering needed
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+  // ── Build text corpus + render thin-text pages as images ──
+  // Text-first: extracted text for all pages.
+  // Pages flagged needsImage (schedules, tables) also rendered visually
+  // so Claude can actually read table/schedule content.
   let fullText = '';
   const sheetList = [];
+  const scheduleImages = []; // { pageNum, sheetNum, discipline, imgData }
+
+  const IMG_SCALE = 1.2;
+  const IMG_QUALITY = 0.80;
+  const MAX_SCHEDULE_IMAGES = 8;
 
   for (const f of validFiles) {
     if (!f.pageData || f.pageData.length === 0) {
-      // Fallback: use the stored text blob if pageData is empty
       if (f.text) fullText += f.text + '\n\n';
       continue;
     }
+
+    // Render thin-text pages as images (schedules, tables)
+    const thinPages = f.pageData.filter(pg => pg.needsImage);
+    if (thinPages.length > 0 && f.rawFile && scheduleImages.length < MAX_SCHEDULE_IMAGES) {
+      try {
+        const arrayBuffer = await f.rawFile.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+        for (const pg of thinPages) {
+          if (scheduleImages.length >= MAX_SCHEDULE_IMAGES) break;
+          try {
+            const page = await pdf.getPage(pg.pageNum);
+            const viewport = page.getViewport({ scale: IMG_SCALE });
+            const canvas = document.createElement('canvas');
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+            const imgData = canvas.toDataURL('image/jpeg', IMG_QUALITY).split(',')[1];
+            scheduleImages.push({ pageNum: pg.pageNum, sheetNum: pg.sheetNum, discipline: pg.discipline, imgData });
+          } catch(e) { console.warn('Image render error page', pg.pageNum, e); }
+        }
+      } catch(e) { console.warn('PDF open error for images:', e); }
+    }
+
+    // Build text for all pages
     for (const pg of f.pageData) {
-      const entry = `=== SHEET: ${pg.sheetNum} | PAGE: ${pg.pageNum} | DISCIPLINE: ${pg.discipline} ===\n${pg.text || '(no text extracted)'}`;
+      const hasImg = scheduleImages.some(s => s.pageNum === pg.pageNum && s.sheetNum === pg.sheetNum);
+      const entry = `=== SHEET: ${pg.sheetNum} | PAGE: ${pg.pageNum} | DISCIPLINE: ${pg.discipline}${hasImg ? ' | SCHEDULE — SEE IMAGE' : ''} ===\n${pg.text || '(see image)'}`;
       fullText += entry + '\n\n';
       sheetList.push({ sheet: pg.sheetNum, discipline: pg.discipline, pageNum: pg.pageNum });
     }
   }
 
-  // Trim to ~120k chars to stay well within token limits
-  const MAX_CHARS = 120000;
+  // Trim text to stay within token limits
+  const MAX_CHARS = 100000;
   if (fullText.length > MAX_CHARS) {
     fullText = fullText.slice(0, MAX_CHARS) + '\n\n[... additional pages truncated for length ...]';
   }
 
-  logLine(`// ✓ Text extracted from ${sheetList.length} sheets`, 'highlight');
+  const scheduleCount = scheduleImages.length;
+  logLine(`// ✓ ${sheetList.length} sheets read`, 'highlight');
+  if (scheduleCount > 0) {
+    logLine(`// ✓ ${scheduleCount} schedule/table page(s) rendered for visual reading`, 'highlight');
+  }
   logLine('// Sending to AI for RFI analysis...', 'highlight');
   await delay(150);
 
@@ -1462,7 +1507,7 @@ async function startAnalysis() {
 
     const primaryPrompt = `You are a Senior Construction Project Manager and RFI specialist with 30 years of experience on commercial projects including schools, hospitals, and government buildings.
 
-You have been given the full extracted text from a ${totalPages}-page construction drawing set. The disciplines present are: ${disciplines.join(', ') || 'Mixed'}.
+You have been given the full extracted text from a ${totalPages}-page construction drawing set. The disciplines present are: ${disciplines.join(', ') || 'Mixed'}.${scheduleImages.length > 0 ? `\n\nIMPORTANT: ${scheduleImages.length} schedule/table sheet(s) had limited text extraction. Their images are attached AFTER this text prompt — read them carefully. These sheets contain critical equipment schedules, panel schedules, VAV box schedules, and similar data that must be cross-referenced against the plans.` : ''}
 
 PROJECT DRAWING TEXT:
 ${fullText}
@@ -1508,7 +1553,20 @@ RESPOND ONLY WITH A VALID JSON ARRAY — no other text, no markdown:
   }
 ]`;
 
-    const pass1Text = await callClaude([{ role: 'user', content: primaryPrompt }], true);
+    // Build message content: text prompt first, then schedule images if any
+    const pass1Content = [{ type: 'text', text: primaryPrompt }];
+    for (const si of scheduleImages) {
+      pass1Content.push({
+        type: 'text',
+        text: `\n--- SCHEDULE/TABLE IMAGE: Sheet ${si.sheetNum}, Page ${si.pageNum}, Discipline: ${si.discipline} ---`
+      });
+      pass1Content.push({
+        type: 'image',
+        source: { type: 'base64', media_type: 'image/jpeg', data: si.imgData }
+      });
+    }
+
+    const pass1Text = await callClaude([{ role: 'user', content: pass1Content }], true);
     const pass1RFIs = parseRFIArray(pass1Text);
     logLine(`// ✓ Primary analysis complete — ${pass1RFIs.length} candidate RFI(s)`, 'highlight');
     await delay(100);
