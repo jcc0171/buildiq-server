@@ -1420,8 +1420,8 @@ async function startAnalysis() {
   const sheetList = [];
   const scheduleImages = []; // { pageNum, sheetNum, discipline, imgData }
 
-  const IMG_SCALE = 1.2;
-  const IMG_QUALITY = 0.80;
+  const IMG_SCALE = 1.8;
+  const IMG_QUALITY = 0.92;
   const MAX_SCHEDULE_IMAGES = 8;
 
   for (const f of validFiles) {
@@ -1661,29 +1661,96 @@ RESPOND ONLY WITH A VALID JSON ARRAY using the same format as before.`;
         schedule_impact: r.schedule_impact || 'Unknown'
       }));
 
-    logLine(`// ✓ ${finalRFIs.length} RFI(s) confirmed`, 'success');
-    if (finalRFIs.length === 0) {
+    // ════════════════════════════════════════
+    // PASS 3 — Number Validation
+    // If schedule images exist, verify any RFI
+    // that references specific numbers against
+    // the actual schedule images to catch misreads.
+    // ════════════════════════════════════════
+    let validatedRFIs = finalRFIs;
+    if (scheduleImages.length > 0 && finalRFIs.length > 0) {
+      logLine('// Running number accuracy check against schedules...', 'highlight');
+      await delay(100);
+
+      const numericRFIs = finalRFIs.filter(r =>
+        /\d+(\.\d+)?\s*(kw|kva|cfm|amp|ton|gpm|psi|btu|hp|volt|v\b)/i.test(r.description + ' ' + r.title)
+      );
+
+      if (numericRFIs.length > 0) {
+        const validationContent = [
+          {
+            type: 'text',
+            text: `You are a meticulous construction document checker. The following RFIs reference specific numeric values (kW, amps, CFM, etc.). Cross-check each numeric value mentioned in each RFI against the schedule images provided. If a number in an RFI does not match what is actually shown in the schedule, correct the description to reflect the actual schedule values. If the conflict still exists with the corrected numbers, keep the RFI. If correcting the numbers eliminates the conflict entirely (i.e. the numbers actually match), remove that RFI by not including it in the output.
+
+RFIs to validate:
+${JSON.stringify(numericRFIs, null, 2)}
+
+RESPOND ONLY WITH A VALID JSON ARRAY of the corrected RFIs using the exact same fields. Do not add or remove fields. Remove any RFI where the conflict disappears after correcting the numbers.`
+          }
+        ];
+        for (const si of scheduleImages) {
+          validationContent.push({
+            type: 'text',
+            text: `\n--- SCHEDULE IMAGE: Sheet ${si.sheetNum}, Page ${si.pageNum} ---`
+          });
+          validationContent.push({
+            type: 'image',
+            source: { type: 'base64', media_type: 'image/jpeg', data: si.imgData }
+          });
+        }
+
+        try {
+          const validationText = await callClaude([{ role: 'user', content: validationContent }], false);
+          const correctedRFIs = parseRFIArray(validationText);
+          if (correctedRFIs.length > 0) {
+            // Merge: replace numeric RFIs with corrected versions, keep non-numeric ones intact
+            const numericIds = new Set(numericRFIs.map(r => r.id));
+            const nonNumeric = finalRFIs.filter(r => !numericIds.has(r.id));
+            const merged = [...nonNumeric, ...correctedRFIs]
+              .sort((a,b) => (priorityOrder[a.priority]||1) - (priorityOrder[b.priority]||1))
+              .map((r,i) => ({ ...r, id: `RFI-${String(i+1).padStart(3,'0')}` }));
+            validatedRFIs = merged;
+            const removed = numericRFIs.length - correctedRFIs.length;
+            if (removed > 0) {
+              logLine(`// ✓ Number check removed ${removed} inaccurate RFI(s)`, 'highlight');
+            } else {
+              logLine('// ✓ Number check passed — all values verified', 'highlight');
+            }
+          } else {
+            logLine('// ✓ Number check passed — all values verified', 'highlight');
+          }
+        } catch(e) {
+          logLine('// Number check skipped — continuing with results', 'highlight');
+        }
+      } else {
+        logLine('// ✓ No numeric schedule references to verify', 'highlight');
+      }
+      await delay(100);
+    }
+
+    logLine(`// ✓ ${validatedRFIs.length} RFI(s) confirmed`, 'success');
+    if (validatedRFIs.length === 0) {
       logLine('// Drawing set appears well coordinated — no critical issues found', 'success');
     }
     await delay(300);
 
-    STATE.rfis = finalRFIs;
+    STATE.rfis = validatedRFIs;
     STATE.uploadsUsed = Math.min(STATE.uploadsUsed + 1, STATE.uploadsMax);
     updateQuota();
 
     document.getElementById('analysisTitle').textContent = 'ANALYSIS COMPLETE';
-    document.getElementById('analysisSub').textContent = finalRFIs.length === 0
+    document.getElementById('analysisSub').textContent = validatedRFIs.length === 0
       ? `No issues found — drawing set appears well coordinated (${totalPages} pages reviewed)`
-      : `${finalRFIs.length} RFI${finalRFIs.length !== 1 ? 's' : ''} found from ${totalPages} pages`;
+      : `${validatedRFIs.length} RFI${validatedRFIs.length !== 1 ? 's' : ''} found from ${totalPages} pages`;
     document.getElementById('analysisTimeHint').style.display = 'none';
     document.getElementById('statusText').textContent = 'Complete';
     document.getElementById('statusText').style.color = '#7aab6e';
     document.querySelector('.pulse-dot').style.background = '#7aab6e';
     document.querySelector('.pulse-dot').style.animationPlayState = 'paused';
 
-    renderRFIs(finalRFIs);
-    document.getElementById('exportCount').textContent = finalRFIs.length + ' RFIs';
-    document.getElementById('pushCount').textContent = finalRFIs.length;
+    renderRFIs(validatedRFIs);
+    document.getElementById('exportCount').textContent = validatedRFIs.length + ' RFIs';
+    document.getElementById('pushCount').textContent = validatedRFIs.length;
     document.getElementById('exportBar').style.display = 'flex';
     const backBtn = document.getElementById('backToHomeBtn');
     if (backBtn) backBtn.style.display = 'inline-block';
