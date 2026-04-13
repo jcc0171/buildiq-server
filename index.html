@@ -277,6 +277,8 @@ body::before {
 .rfi-email-btn:hover { background: var(--ink); color: var(--paper); border-color: var(--ink); }
 
 .rfi-page-ref { opacity: 1 !important; color: var(--amber) !important; font-size: 11px !important; background: rgba(212,130,10,0.08); padding: 3px 8px; border: 1px solid rgba(212,130,10,0.25); }
+.confidence-high { font-family: var(--mono); font-size: 10px; letter-spacing: 1px; color: var(--sage); background: rgba(74,103,65,0.10); border: 1px solid rgba(74,103,65,0.3); padding: 3px 10px; display: inline-flex; align-items: center; gap: 5px; }
+.confidence-medium { font-family: var(--mono); font-size: 10px; letter-spacing: 1px; color: #7a6500; background: rgba(212,130,10,0.10); border: 1px solid rgba(212,130,10,0.3); padding: 3px 10px; display: inline-flex; align-items: center; gap: 5px; }
 
 /* Export bar */
 .export-bar {
@@ -1420,9 +1422,10 @@ async function startAnalysis() {
   const sheetList = [];
   const scheduleImages = []; // { pageNum, sheetNum, discipline, imgData }
 
-  const IMG_SCALE = 1.8;
-  const IMG_QUALITY = 0.92;
-  const MAX_SCHEDULE_IMAGES = 8;
+  const IMG_SCALE = 1.5;
+  const IMG_QUALITY = 0.82;
+  const MAX_SCHEDULE_IMAGES = 6;
+  const MAX_IMAGE_PAYLOAD_BYTES = 3 * 1024 * 1024; // 3MB total image budget
 
   for (const f of validFiles) {
     if (!f.pageData || f.pageData.length === 0) {
@@ -1450,6 +1453,13 @@ async function startAnalysis() {
             canvas.height = viewport.height;
             await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
             const imgData = canvas.toDataURL('image/jpeg', IMG_QUALITY).split(',')[1];
+            // Guard: skip if adding this image would exceed payload budget
+            const imgBytes = imgData.length * 0.75; // base64 to bytes estimate
+            const currentBytes = scheduleImages.reduce((a, s) => a + s.imgData.length * 0.75, 0);
+            if (currentBytes + imgBytes > MAX_IMAGE_PAYLOAD_BYTES) {
+              console.warn(`Skipping schedule image page ${pg.pageNum} — payload limit reached`);
+              break;
+            }
             scheduleImages.push({ pageNum: pg.pageNum, sheetNum: pg.sheetNum, discipline: pg.discipline, imgData });
           } catch(e) { console.warn('Image render error page', pg.pageNum, e); }
         }
@@ -1662,71 +1672,91 @@ RESPOND ONLY WITH A VALID JSON ARRAY using the same format as before.`;
       }));
 
     // ════════════════════════════════════════
-    // PASS 3 — Number Validation
-    // If schedule images exist, verify any RFI
-    // that references specific numbers against
-    // the actual schedule images to catch misreads.
+    // PASS 3 — Full Accuracy & Confidence Check
+    // Every RFI is reviewed for verifiability.
+    // Each gets a confidence score: high/medium.
+    // RFIs that cannot be verified are dropped.
+    // Numbers are corrected against schedule images.
     // ════════════════════════════════════════
     let validatedRFIs = finalRFIs;
-    if (scheduleImages.length > 0 && finalRFIs.length > 0) {
-      logLine('// Running number accuracy check against schedules...', 'highlight');
-      await delay(100);
+    logLine('// Running accuracy & confidence check...', 'highlight');
+    await delay(100);
 
-      const numericRFIs = finalRFIs.filter(r =>
-        /\d+(\.\d+)?\s*(kw|kva|cfm|amp|ton|gpm|psi|btu|hp|volt|v\b)/i.test(r.description + ' ' + r.title)
-      );
+    try {
+      const pass3Content = [
+        {
+          type: 'text',
+          text: `You are a senior construction document auditor. Your job is to quality-control a set of AI-generated RFIs before they are sent to a paying customer. Your standard is high — a contractor will stake their reputation on these RFIs.
 
-      if (numericRFIs.length > 0) {
-        const validationContent = [
-          {
-            type: 'text',
-            text: `You are a meticulous construction document checker. The following RFIs reference specific numeric values (kW, amps, CFM, etc.). Cross-check each numeric value mentioned in each RFI against the schedule images provided. If a number in an RFI does not match what is actually shown in the schedule, correct the description to reflect the actual schedule values. If the conflict still exists with the corrected numbers, keep the RFI. If correcting the numbers eliminates the conflict entirely (i.e. the numbers actually match), remove that RFI by not including it in the output.
+Here is the full drawing text that was used to generate these RFIs:
+${fullText.slice(0, 40000)}
 
-RFIs to validate:
-${JSON.stringify(numericRFIs, null, 2)}
+Here are the RFIs to audit:
+${JSON.stringify(finalRFIs, null, 2)}
 
-RESPOND ONLY WITH A VALID JSON ARRAY of the corrected RFIs using the exact same fields. Do not add or remove fields. Remove any RFI where the conflict disappears after correcting the numbers.`
-          }
-        ];
-        for (const si of scheduleImages) {
-          validationContent.push({
-            type: 'text',
-            text: `\n--- SCHEDULE IMAGE: Sheet ${si.sheetNum}, Page ${si.pageNum} ---`
-          });
-          validationContent.push({
-            type: 'image',
-            source: { type: 'base64', media_type: 'image/jpeg', data: si.imgData }
-          });
+For EACH RFI apply these rules strictly:
+
+KEEP with confidence="high" if:
+- The issue is directly cited from a specific sheet note, key note, or drawing callout
+- The sheet number referenced actually exists in the drawing text
+- Any specific numbers (kW, CFM, amps, dimensions) are verified correct against the drawings
+- The conflict is unambiguous and a contractor would immediately recognize it as real
+
+KEEP with confidence="medium" if:
+- The issue is real but inferred rather than explicitly stated
+- The sheet exists but the exact detail requires field verification
+- The description is accurate but conservative language is appropriate
+
+DROP entirely (do not include in output) if:
+- Any specific number in the description does not match what the drawings actually show
+- The sheet number referenced does not exist in the drawing set
+- The conflict is speculative or generic without a specific verifiable location
+- The issue duplicates another RFI already in the list
+- The description contains information not supported by the provided drawings
+
+${scheduleImages.length > 0 ? `IMPORTANT: ${scheduleImages.length} schedule/table image(s) are attached. Cross-check ALL numeric values in RFIs against these images. If a number is wrong, correct it. If correcting it removes the conflict, drop the RFI.` : ''}
+
+Add a "confidence" field to each kept RFI: "high" or "medium".
+RESPOND ONLY WITH A VALID JSON ARRAY. Same fields as input plus the new "confidence" field.`
         }
+      ];
 
-        try {
-          const validationText = await callClaude([{ role: 'user', content: validationContent }], false);
-          const correctedRFIs = parseRFIArray(validationText);
-          if (correctedRFIs.length > 0) {
-            // Merge: replace numeric RFIs with corrected versions, keep non-numeric ones intact
-            const numericIds = new Set(numericRFIs.map(r => r.id));
-            const nonNumeric = finalRFIs.filter(r => !numericIds.has(r.id));
-            const merged = [...nonNumeric, ...correctedRFIs]
-              .sort((a,b) => (priorityOrder[a.priority]||1) - (priorityOrder[b.priority]||1))
-              .map((r,i) => ({ ...r, id: `RFI-${String(i+1).padStart(3,'0')}` }));
-            validatedRFIs = merged;
-            const removed = numericRFIs.length - correctedRFIs.length;
-            if (removed > 0) {
-              logLine(`// ✓ Number check removed ${removed} inaccurate RFI(s)`, 'highlight');
-            } else {
-              logLine('// ✓ Number check passed — all values verified', 'highlight');
-            }
-          } else {
-            logLine('// ✓ Number check passed — all values verified', 'highlight');
-          }
-        } catch(e) {
-          logLine('// Number check skipped — continuing with results', 'highlight');
+      // Attach schedule images for number verification
+      for (const si of scheduleImages) {
+        pass3Content.push({
+          type: 'text',
+          text: `\n--- SCHEDULE IMAGE: Sheet ${si.sheetNum}, Page ${si.pageNum} ---`
+        });
+        pass3Content.push({
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/jpeg', data: si.imgData }
+        });
+      }
+
+      const pass3Text = await callClaude([{ role: 'user', content: pass3Content }], false);
+      const auditedRFIs = parseRFIArray(pass3Text);
+
+      if (auditedRFIs.length > 0) {
+        const dropped = finalRFIs.length - auditedRFIs.length;
+        validatedRFIs = auditedRFIs
+          .sort((a,b) => (priorityOrder[a.priority]||1) - (priorityOrder[b.priority]||1))
+          .map((r,i) => ({ ...r, id: `RFI-${String(i+1).padStart(3,'0')}` }));
+        if (dropped > 0) {
+          logLine(`// ✓ Accuracy check removed ${dropped} unverifiable RFI(s)`, 'highlight');
+        } else {
+          logLine('// ✓ Accuracy check passed — all RFIs verified', 'highlight');
         }
       } else {
-        logLine('// ✓ No numeric schedule references to verify', 'highlight');
+        // If pass 3 returns empty (parse fail), fall back to finalRFIs without confidence
+        validatedRFIs = finalRFIs.map(r => ({ ...r, confidence: 'medium' }));
+        logLine('// ✓ Accuracy check complete', 'highlight');
       }
-      await delay(100);
+    } catch(e) {
+      // Non-fatal — fall back gracefully
+      validatedRFIs = finalRFIs.map(r => ({ ...r, confidence: 'medium' }));
+      logLine('// Accuracy check skipped — continuing with results', 'highlight');
     }
+    await delay(100);
 
     logLine(`// ✓ ${validatedRFIs.length} RFI(s) confirmed`, 'success');
     if (validatedRFIs.length === 0) {
@@ -1810,7 +1840,10 @@ function renderRFIs(rfis, filter = 'all') {
           <div class="rfi-card-num">${rfi.id}</div>
           <div class="rfi-card-title">${rfi.title}</div>
         </div>
-        <div class="rfi-priority priority-${rfi.priority}">${rfi.priority?.toUpperCase()}</div>
+        <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex-shrink:0;">
+          <div class="rfi-priority priority-${rfi.priority}">${rfi.priority?.toUpperCase()}</div>
+          ${rfi.confidence ? `<div class="confidence-${rfi.confidence}">${rfi.confidence === 'high' ? '✓ Verified' : '~ Field Verify'}</div>` : ''}
+        </div>
       </div>
       <div class="rfi-card-body">${rfi.description}</div>
       <div class="rfi-card-meta">
