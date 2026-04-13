@@ -1565,6 +1565,29 @@ RULES:
 5. A response of zero RFIs on a multi-discipline renovation set is almost certainly wrong — look harder
 6. Do NOT pad with weak observations — but do NOT leave real issues on the table either
 
+PRIORITY SCORING — READ THIS CAREFULLY:
+Priority is not just about cost. A low-cost item can be HIGH priority if it blocks other work.
+Score priority as follows:
+
+HIGH — assign when ANY of these are true:
+- Requires concrete cutting, slab penetration, or underground work (must be resolved before floors close)
+- Blocks another trade from proceeding (e.g. no structural detail before MEP rough-in)
+- Life safety, egress, or fire rating is affected
+- Equipment cannot be ordered or fabricated without resolution
+- Demolition scope affects systems serving occupied areas
+- Conflict between two drawings at a specific location that will cause field stoppage
+
+MEDIUM — assign when:
+- Issue needs resolution before construction reaches that phase but is not immediately blocking
+- Missing details that affect coordination but work can proceed elsewhere in the meantime
+- Temporary or phasing requirements that are undefined but don't stop current work
+- Floor drain relocations, piping reroutes, or exhaust scope gaps that affect sequence
+
+LOW — assign only when:
+- Issue can be resolved during construction without delaying any trade
+- Clarification needed but contractor can reasonably proceed with a logical assumption
+- Administrative or documentation gap with no field impact
+
 RESPOND ONLY WITH A VALID JSON ARRAY — no other text, no markdown:
 [
   {
@@ -1713,6 +1736,18 @@ DROP entirely (do not include in output) if:
 - The conflict is speculative or generic without a specific verifiable location
 - The issue duplicates another RFI already in the list
 - The description contains information not supported by the provided drawings
+
+PRIORITY CORRECTION — also review and correct each RFI's priority using these rules:
+Upgrade to HIGH if any of these apply:
+- Involves concrete cutting, slab penetration, or underground work
+- Blocks another trade from starting their work
+- Affects life safety, egress, or fire ratings
+- Equipment cannot be ordered without this being resolved
+- Demolition affects systems serving occupied spaces
+- Direct conflict between two drawings causing a field stoppage
+
+Downgrade to LOW only if the issue can be resolved mid-construction without delaying any trade.
+Otherwise keep as MEDIUM.
 
 ${scheduleImages.length > 0 ? `IMPORTANT: ${scheduleImages.length} schedule/table image(s) are attached. Cross-check ALL numeric values in RFIs against these images. If a number is wrong, correct it. If correcting it removes the conflict, drop the RFI.` : ''}
 
