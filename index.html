@@ -1742,6 +1742,10 @@ REWRITE (do not drop) if:
 - The RFI claims a sheet is missing but it actually exists — correct the description to reflect what is incomplete or wrong on that sheet
 - A specific number is wrong but the underlying conflict still exists after correction — fix the number and keep the RFI
 - The title overstates the issue but the core concern is valid — soften the title, keep the RFI
+- The RFI says "no X provided", "X not shown", or "X does not exist" but X actually does appear in the drawings in some form — rewrite to say "X insufficiently detailed", "X not clearly distinguished", or "X requires clarification" as appropriate. The underlying concern is still valid — the wording just needs to be accurate. Examples:
+  - "No ductwork layout provided" when ductwork IS shown but new vs existing is unclear → "New ductwork routing not distinguished from existing on mechanical plan"
+  - "No electrical panel schedule provided" when a partial schedule exists → "Panel schedule incomplete — breaker sizing and load calculations not fully detailed"
+  - "No structural details shown" when generic details exist but location-specific ones are missing → "Location-specific structural details not provided for this condition"
 
 DROP only if:
 - The corrected numbers completely eliminate the conflict (no issue remains after fixing)
