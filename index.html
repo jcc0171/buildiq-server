@@ -1719,6 +1719,14 @@ ${JSON.stringify(finalRFIs, null, 2)}
 
 For EACH RFI apply these rules strictly:
 
+SHEET INDEX VERIFICATION — do this first for every RFI:
+The drawing set's sheet index is listed in the drawing text (usually on the cover sheet or general notes). Before evaluating any RFI, extract the list of all sheet numbers that actually exist in this drawing set.
+
+If an RFI claims a sheet is "missing" or "not included":
+- Check the sheet index first
+- If the sheet DOES exist in the drawing set: REWRITE the RFI. Keep the underlying concern but correct the description to accurately describe what is actually wrong on or missing from that sheet. Do not claim the sheet is missing. Adjust confidence to "medium" since the issue is now inferred.
+- If the sheet genuinely does NOT exist in the drawing set: keep the RFI as written with confidence="high"
+
 KEEP with confidence="high" if:
 - The issue is directly cited from a specific sheet note, key note, or drawing callout
 - The sheet number referenced actually exists in the drawing text
@@ -1730,12 +1738,15 @@ KEEP with confidence="medium" if:
 - The sheet exists but the exact detail requires field verification
 - The description is accurate but conservative language is appropriate
 
-DROP entirely (do not include in output) if:
-- Any specific number in the description does not match what the drawings actually show
-- The sheet number referenced does not exist in the drawing set
-- The conflict is speculative or generic without a specific verifiable location
-- The issue duplicates another RFI already in the list
-- The description contains information not supported by the provided drawings
+REWRITE (do not drop) if:
+- The RFI claims a sheet is missing but it actually exists — correct the description to reflect what is incomplete or wrong on that sheet
+- A specific number is wrong but the underlying conflict still exists after correction — fix the number and keep the RFI
+- The title overstates the issue but the core concern is valid — soften the title, keep the RFI
+
+DROP only if:
+- The corrected numbers completely eliminate the conflict (no issue remains after fixing)
+- The conflict is entirely speculative with no drawing evidence whatsoever
+- The RFI is a true duplicate of another already in the list with identical location and issue
 
 PRIORITY CORRECTION — also review and correct each RFI's priority using these rules:
 Upgrade to HIGH if any of these apply:
@@ -1777,7 +1788,7 @@ RESPOND ONLY WITH A VALID JSON ARRAY. Same fields as input plus the new "confide
           .sort((a,b) => (priorityOrder[a.priority]||1) - (priorityOrder[b.priority]||1))
           .map((r,i) => ({ ...r, id: `RFI-${String(i+1).padStart(3,'0')}` }));
         if (dropped > 0) {
-          logLine(`// ✓ Accuracy check removed ${dropped} unverifiable RFI(s)`, 'highlight');
+          logLine(`// ✓ Accuracy check corrected & verified ${auditedRFIs.length} RFI(s), removed ${dropped}`, 'highlight');
         } else {
           logLine('// ✓ Accuracy check passed — all RFIs verified', 'highlight');
         }
