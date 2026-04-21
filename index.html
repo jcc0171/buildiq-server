@@ -1444,11 +1444,48 @@ async function startAnalysis() {
     const processed = await serverResp.json();
     fullText = processed.fullText;
     sheetList = processed.sheetList;
-    scheduleImages = processed.scheduleImages || [];
 
-    logLine(`// ✓ ${processed.totalPages} sheets read`, 'highlight');
-    if (processed.scheduleCount > 0) {
-      logLine(`// ✓ ${processed.scheduleCount} schedule/table page(s) rendered at full resolution`, 'highlight');
+    logLine(`// ✓ ${processed.totalPages} sheets read (server-side, full resolution)`, 'highlight');
+
+    // ── Render schedule pages as images browser-side ──
+    // Server identified which pages need visual rendering.
+    // Browser renders just those pages at high quality.
+    // This is fast since it's only schedule pages, not all pages.
+    const schedulePageNums = processed.sheetList.filter(s => s.needsImage);
+    if (schedulePageNums.length > 0) {
+      logLine(`// Rendering ${schedulePageNums.length} schedule/table page(s) visually...`, 'highlight');
+      await delay(50);
+
+      pdfjsLib.GlobalWorkerOptions.workerSrc =
+        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+      const IMG_SCALE = 2.0;
+      const IMG_QUALITY = 0.92;
+
+      try {
+        const arrayBuffer = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+
+        for (const sp of schedulePageNums) {
+          try {
+            const page = await pdf.getPage(sp.pageNum);
+            const viewport = page.getViewport({ scale: IMG_SCALE });
+            const canvas = document.createElement('canvas');
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+            const imgData = canvas.toDataURL('image/jpeg', IMG_QUALITY).split(',')[1];
+            scheduleImages.push({
+              pageNum: sp.pageNum,
+              sheetNum: sp.sheet,
+              discipline: sp.discipline,
+              imgData
+            });
+          } catch(e) { console.warn('Image render error page', sp.pageNum, e); }
+        }
+      } catch(e) { console.warn('PDF open for images failed:', e); }
+
+      logLine(`// ✓ ${scheduleImages.length} schedule page(s) rendered at 2x resolution`, 'highlight');
     }
 
   } catch(err) {
