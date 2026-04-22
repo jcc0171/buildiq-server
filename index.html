@@ -8,6 +8,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Serif+Display:ital@0;1&family=DM+Mono:wght@300;400;500&family=Instrument+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
 <style>
 /* ═══════════════════════════════════════════
    DESIGN SYSTEM
@@ -1076,10 +1077,12 @@ function updateAnalyzeButton() {
 }
 
 /* ═══════════════════════════════════════════
-   AI ANALYSIS — DIRECT PDF ENGINE v9.0
-   Browser → Anthropic API directly.
-   PDF never touches Vercel. No size limits.
-   Claude reads every page natively.
+   AI ANALYSIS — PDF SPLIT ENGINE v10.0
+   Uses pdf-lib to split large PDFs into
+   ~8MB chunks server-side in the browser.
+   Each chunk sent as a native PDF document
+   through Vercel → Claude. No images.
+   No CORS. No size limit headaches.
 ═══════════════════════════════════════════ */
 async function startAnalysis() {
   showSection('sec-results');
@@ -1096,58 +1099,45 @@ async function startAnalysis() {
     streamLog.scrollTop = streamLog.scrollHeight;
   };
 
-  const ANALYZE_URL = 'https://buildiq-server.vercel.app/api/analyze';
+  const PROXY_URL = 'https://buildiq-server.vercel.app/api/analyze';
   const rfiMax = STATE.plan === 'pro' ? 12 : 10;
   const validFiles = STATE.files.filter(f => f.ok);
   const totalPages = validFiles.reduce((a,f) => a + f.pages, 0);
 
-  logLine('// PlanIQ Pro — Direct PDF Engine v9.0', 'highlight');
-  logLine(`// ${validFiles.length} file(s) · ${totalPages} pages`);
+  logLine('// PlanIQ Pro — PDF Split Engine v10.0', 'highlight');
+  logLine(`// ${validFiles.length} file(s) · ${totalPages} pages total`);
   await delay(200);
 
-  // ── Step 1: Get API key from server ──
-  let apiKey = '';
-  try {
-    logLine('// Connecting to analysis server...', 'highlight');
-    const keyRes = await fetch(ANALYZE_URL);
-    if (!keyRes.ok) throw new Error('Could not connect to server');
-    const keyData = await keyRes.json();
-    apiKey = keyData.apiKey;
-    if (!apiKey) throw new Error('No API key returned');
-    logLine('// ✓ Connected', 'success');
-  } catch(err) {
-    logLine(`// Connection error: ${err.message}`, 'error');
-    fallbackToDemo(logLine);
-    return;
-  }
+  // ── Helper: split a PDF into chunks of ~CHUNK_PAGES pages ──
+  // Each chunk becomes its own valid PDF sent as a native document.
+  // Target ~3.5MB per chunk — well under Vercel's 4.5MB limit after JSON wrapping.
+  const CHUNK_PAGES = 12;
 
-  // ── Step 2: Read PDFs as base64 ──
-  const pdfDocs = [];
-  try {
-    for (const f of validFiles) {
-      logLine(`// Reading: ${f.name} (${f.pages} pages, ${f.size})...`, 'highlight');
-      const ab = await f.rawFile.arrayBuffer();
-      const bytes = new Uint8Array(ab);
+  async function splitPDF(arrayBuffer, totalPgs) {
+    const { PDFDocument } = PDFLib;
+    const srcDoc = await PDFDocument.load(arrayBuffer);
+    const chunks = []; // [{ base64, startPage, endPage }]
+
+    for (let start = 0; start < totalPgs; start += CHUNK_PAGES) {
+      const end = Math.min(start + CHUNK_PAGES, totalPgs);
+      const chunkDoc = await PDFDocument.create();
+      const pageIndices = [];
+      for (let i = start; i < end; i++) pageIndices.push(i);
+      const copiedPages = await chunkDoc.copyPagesFromDocument(srcDoc, pageIndices);
+      copiedPages.forEach(p => chunkDoc.addPage(p));
+      const chunkBytes = await chunkDoc.save();
+      // Convert to base64
       let binary = '';
-      const chunkSize = 8192;
-      for (let i = 0; i < bytes.length; i += chunkSize) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+      const bytes = new Uint8Array(chunkBytes);
+      for (let i = 0; i < bytes.length; i += 8192) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
       }
-      const base64 = btoa(binary);
-      logLine(`// ✓ ${f.name} — ready`, 'success');
-      pdfDocs.push({ name: f.name, pages: f.pages, base64 });
-      await delay(30);
+      chunks.push({ base64: btoa(binary), startPage: start + 1, endPage: end });
     }
-  } catch(err) {
-    logLine(`// Read error: ${err.message}`, 'error');
-    fallbackToDemo(logLine);
-    return;
+    return chunks;
   }
 
-  // ── Step 3: Call Anthropic directly ──
-  logLine('// Sending directly to Claude — no size limits...', 'highlight');
-  await delay(100);
-
+  // ── JSON parse helper ──
   function parseRFIArray(text) {
     try {
       let clean = text.replace(/```json/gi,'').replace(/```/g,'').trim();
@@ -1157,36 +1147,65 @@ async function startAnalysis() {
     } catch(e) { return []; }
   }
 
-  try {
-    const rfiPrompt = `You are a Senior Construction Project Manager and licensed architect with 30 years of experience on commercial, institutional, and industrial projects.
+  // ── Claude call helper — sends one PDF chunk through Vercel proxy ──
+  async function analyzeChunk(chunkBase64, chunkLabel, prompt, isFirst) {
+    const content = [
+      {
+        type: 'document',
+        source: { type: 'base64', media_type: 'application/pdf', data: chunkBase64 },
+        title: chunkLabel
+      },
+      { type: 'text', text: prompt }
+    ];
 
-You are reading a complete set of construction drawings. You can see every page — floor plans, elevations, sections, details, schedules, equipment schedules, panel schedules, door schedules, finish schedules, and all other sheets.
+    const resp = await fetch(PROXY_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        messages: [{ role: 'user', content }],
+        userId: isFirst ? STATE.userId : null,
+        action: 'analyze'
+      })
+    });
+
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}));
+      throw new Error(err.error || `Server error ${resp.status}`);
+    }
+    const data = await resp.json();
+    return data.content?.[0]?.text || '';
+  }
+
+  // ── Build the RFI prompt ──
+  const rfiPrompt = (chunkInfo) => `You are a Senior Construction Project Manager and licensed architect with 30 years of experience on commercial, institutional, and industrial projects.
+
+You are reading ${chunkInfo} from a construction drawing set. You can see every page in this section — floor plans, elevations, sections, schedules, equipment schedules, panel schedules, door schedules, and all other sheets in this portion of the set.
 
 YOUR TASK:
-Review ALL pages carefully and identify real, job-site-ready RFIs — items a contractor, PM, or superintendent would actually send to the engineer of record before or during construction.
+Identify real, job-site-ready RFIs — items a contractor or PM would actually send to the engineer of record.
 
 WHAT MAKES A REAL RFI:
-1. A direct conflict between two sheets — duct on mechanical conflicts with beam on structural at the same grid location
-2. A value on a plan that doesn't match the schedule — AHU-1 shown as 5-ton on plan but 7.5-ton in the equipment schedule
-3. A detail called out on a plan that does not exist anywhere in this drawing set
-4. Equipment shown without a corresponding electrical feed, structural support, or piping connection in the set
-5. Demolition scope that removes systems still required by the renovation drawings
-6. Underground or concealed work where existing conditions are unknown, unverified, or marked TBD
-7. Fire or smoke damper requirements at rated walls where new ductwork penetrates — if not detailed
-8. Panel schedule circuit loads that don't match equipment schedule nameplate loads
-9. Sheet notes saying "coordinate with" or "by others" where the referenced drawing is missing from this set
-10. Code-required dimensions — egress widths, ADA clearances, door swings — that appear undersized
+1. A direct conflict between two sheets — duct conflicts with beam at same location
+2. A value on a plan that doesn't match the schedule — AHU tag, CFM, kW, circuit number mismatch
+3. A detail called out that does not exist in this drawing set
+4. Equipment shown without electrical feed, structural support, or piping connection
+5. Demolition scope removing systems still required by renovation drawings
+6. Underground or concealed work where existing conditions are TBD or unverified
+7. Fire/smoke damper requirements at rated walls where new ductwork penetrates
+8. Panel schedule loads that don't match equipment schedule nameplate loads
+9. Notes saying "coordinate with" or "by others" where referenced drawing is missing
+10. Egress widths, ADA clearances, or door swings that appear undersized
 
 WHAT IS NOT AN RFI:
-- Generic observations about details that are normally on separate submittals
-- Items you cannot clearly verify from the drawings provided
+- Generic observations about details that are normally in submittals
+- Items you cannot clearly verify from the pages provided
 
 PRIORITY:
-HIGH — blocks construction, life safety, requires underground or slab work, equipment cannot be ordered
-MEDIUM — needs resolution before that trade starts but doesn't block current work
-LOW — can be resolved mid-construction without delaying any trade
+HIGH — blocks construction, life safety, requires slab/underground work, equipment can't be ordered
+MEDIUM — needs resolution before that trade starts, doesn't block current work
+LOW — can be resolved mid-construction without delay
 
-Return UP TO ${rfiMax} RFIs. Return FEWER if genuinely fewer real issues exist. Never pad or invent.
+Return UP TO ${Math.ceil(rfiMax / 2) + 2} RFIs for this section. Return FEWER if fewer real issues exist. Never pad.
 
 RESPOND ONLY WITH A VALID JSON ARRAY — no preamble, no markdown:
 [
@@ -1194,76 +1213,61 @@ RESPOND ONLY WITH A VALID JSON ARRAY — no preamble, no markdown:
     "title": "Specific issue — what and where",
     "priority": "high|medium|low",
     "discipline": "Mechanical|Electrical|Architectural|Structural|Civil|Fire Protection|General",
-    "page_ref": "Sheet number(s) as shown on the drawing e.g. M101, E601, A-201",
-    "location": "Specific room, grid line, floor, or area",
-    "description": "What the drawings show. What is missing or conflicting. Why this needs resolution before work proceeds. Cite sheet numbers, room numbers, equipment tags, grid lines, and actual values you can see.",
-    "spec_ref": "Relevant keynote, sheet note, or spec section if visible in the drawings",
+    "page_ref": "Sheet number(s) as shown on the drawing",
+    "location": "Specific room, grid line, or area",
+    "description": "What the drawings show. What is missing or conflicting. Why this needs resolution. Cite sheet numbers, equipment tags, and actual values visible in the drawings.",
+    "spec_ref": "Relevant keynote or spec section if visible",
     "cost_impact": "Low (<$5K)|Medium ($5K-$50K)|High (>$50K)",
     "schedule_impact": "None|Low (1-3 days)|Medium (1-2 weeks)|High (2+ weeks)"
   }
 ]`;
 
-    // Build content — PDFs as native documents + prompt
-    const content = [];
-    for (const doc of pdfDocs) {
-      content.push({
-        type: 'document',
-        source: { type: 'base64', media_type: 'application/pdf', data: doc.base64 },
-        title: doc.name,
-        context: `${doc.pages}-page construction drawing set`
-      });
-    }
-    content.push({ type: 'text', text: rfiPrompt });
+  try {
+    let allRawRFIs = [];
+    let isFirstChunk = true;
 
-    // Call Anthropic directly — bypasses Vercel size limits entirely
-    logLine('// Claude is reading the drawings...', 'highlight');
-    const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': apiKey,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'pdfs-2024-09-25'
-      },
-      body: JSON.stringify({
-        model: 'claude-opus-4-5',
-        max_tokens: 16000,
-        messages: [{ role: 'user', content }]
-      })
-    });
-
-    if (!claudeRes.ok) {
-      const errData = await claudeRes.json().catch(() => ({}));
-      throw new Error(errData?.error?.message || `Claude API error ${claudeRes.status}`);
-    }
-
-    const claudeData = await claudeRes.json();
-    const resultText = claudeData.content?.[0]?.text || '';
-    const rawRFIs = parseRFIArray(resultText);
-
-    logLine(`// ✓ Analysis complete — ${rawRFIs.length} issue(s) found`, 'success');
-
-    // ── Step 4: Record upload in Supabase ──
-    if (STATE.userId) {
+    for (const f of validFiles) {
+      logLine(`// Splitting: ${f.name} into ${Math.ceil(f.pages / CHUNK_PAGES)} chunk(s)...`, 'highlight');
+      const ab = await f.rawFile.arrayBuffer();
+      let chunks;
       try {
-        const countRes = await fetch(ANALYZE_URL, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ action: 'count_upload', userId: STATE.userId })
-        });
-        if (countRes.status === 403) {
-          throw new Error('Upload limit reached. Please upgrade your plan.');
-        }
-      } catch(e) {
-        if (e.message.includes('limit')) throw e;
-        console.warn('Upload count error (non-fatal):', e);
+        chunks = await splitPDF(ab, f.pages);
+      } catch(splitErr) {
+        logLine(`// Split error: ${splitErr.message}`, 'error');
+        throw splitErr;
+      }
+      logLine(`// ✓ ${chunks.length} chunk(s) ready — sending to Claude...`, 'success');
+
+      for (let c = 0; c < chunks.length; c++) {
+        const chunk = chunks[c];
+        const chunkLabel = chunks.length === 1
+          ? f.name
+          : `${f.name} — Pages ${chunk.startPage}–${chunk.endPage}`;
+        const chunkInfo = chunks.length === 1
+          ? `all ${f.pages} pages of "${f.name}"`
+          : `pages ${chunk.startPage}–${chunk.endPage} of "${f.name}" (${f.pages} pages total)`;
+
+        logLine(`// Analyzing: ${chunkLabel}...`, 'highlight');
+
+        const resultText = await analyzeChunk(
+          chunk.base64,
+          chunkLabel,
+          rfiPrompt(chunkInfo),
+          isFirstChunk
+        );
+        isFirstChunk = false;
+
+        const chunkRFIs = parseRFIArray(resultText);
+        logLine(`// ✓ Pages ${chunk.startPage}–${chunk.endPage}: ${chunkRFIs.length} issue(s)`, 'success');
+        allRawRFIs = allRawRFIs.concat(chunkRFIs);
+        await delay(80);
       }
     }
 
-    // ── Deduplicate, sort, assign IDs ──
+    // ── Deduplicate, sort, cap, assign IDs ──
     const seen = new Set();
     const priorityOrder = { high: 0, medium: 1, low: 2 };
-    const finalRFIs = rawRFIs
+    const finalRFIs = allRawRFIs
       .filter(r => {
         if (!r || !r.title || r.title.length < 10) return false;
         const key = r.title.toLowerCase().replace(/\s+/g, '').slice(0, 50);
@@ -1286,14 +1290,31 @@ RESPOND ONLY WITH A VALID JSON ARRAY — no preamble, no markdown:
         confidence: 'high'
       }));
 
+    // ── Record upload count ──
+    if (STATE.userId) {
+      try {
+        const cr = await fetch(PROXY_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'count_upload', userId: STATE.userId })
+        });
+        if (cr.status === 403) throw new Error('Upload limit reached. Please upgrade your plan.');
+      } catch(e) {
+        if (e.message.includes('limit')) throw e;
+      }
+    }
+
     STATE.rfis = finalRFIs;
     STATE.uploadsUsed = Math.min(STATE.uploadsUsed + 1, STATE.uploadsMax);
     updateQuota();
 
+    logLine(`// ✓ ${finalRFIs.length} RFI(s) ready`, 'success');
+    await delay(200);
+
     document.getElementById('analysisTitle').textContent = 'ANALYSIS COMPLETE';
     document.getElementById('analysisSub').textContent = finalRFIs.length === 0
-      ? `No issues found — ${totalPages} pages reviewed`
-      : `${finalRFIs.length} RFI${finalRFIs.length!==1?'s':''} found from ${totalPages} pages`;
+      ? `No critical issues found — ${totalPages} pages reviewed`
+      : `${finalRFIs.length} RFI${finalRFIs.length!==1?'s':''} found across ${totalPages} pages`;
     document.getElementById('analysisTimeHint').style.display = 'none';
     document.getElementById('statusText').textContent = 'Complete';
     document.getElementById('statusText').style.color = '#7aab6e';
