@@ -21,26 +21,23 @@ export default async function handler(req, res) {
 
   try {
     const body = req.body || {};
-
     if (body.pdfBase64) return await processPDF(body, res);
     if (body.messages) return await legacyProxy(body, res);
-
     res.status(400).json({ error: 'Invalid request' });
-
   } catch(e) {
     console.error('Handler error:', e);
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, stack: e.stack });
   }
 }
 
 async function processPDF(body, res) {
   const { pdfBase64, userId, pagesMax } = body;
 
+  // ── Check upload limits ──
   if (userId) {
     const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
     const { data: profile, error: fetchError } = await supabase
       .from('profiles').select('uploads_used, uploads_max, plan').eq('id', userId).single();
-
     if (fetchError) { res.status(500).json({ error: 'Could not fetch user profile' }); return; }
     if (profile.uploads_used >= profile.uploads_max) {
       res.status(403).json({ error: 'Upload limit reached. Please upgrade your plan.' }); return;
@@ -48,11 +45,39 @@ async function processPDF(body, res) {
     await supabase.from('profiles').update({ uploads_used: profile.uploads_used + 1 }).eq('id', userId);
   }
 
-  const pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.js');
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) { res.status(500).json({ error: 'No API key' }); return; }
+
+  // ── Load pdfjs with multiple fallback paths ──
+  let pdfjsLib;
+  try {
+    pdfjsLib = await import('pdfjs-dist/legacy/build/pdf.js');
+  } catch(e1) {
+    try {
+      pdfjsLib = await import('pdfjs-dist');
+    } catch(e2) {
+      res.status(500).json({ error: 'pdfjs-dist not available: ' + e2.message });
+      return;
+    }
+  }
+
+  // ── Convert base64 to buffer ──
   const pdfBuffer = Buffer.from(pdfBase64, 'base64');
   const pdfData = new Uint8Array(pdfBuffer);
 
-  const pdf = await pdfjsLib.getDocument({ data: pdfData, useSystemFonts: true, disableFontFace: true, verbosity: 0 }).promise;
+  // ── Load PDF ──
+  const getDocument = pdfjsLib.getDocument || pdfjsLib.default?.getDocument;
+  if (!getDocument) {
+    res.status(500).json({ error: 'pdfjs getDocument not found' });
+    return;
+  }
+
+  const pdf = await getDocument({
+    data: pdfData,
+    useSystemFonts: true,
+    disableFontFace: true,
+    verbosity: 0,
+  }).promise;
 
   const pagesToProcess = Math.min(pdf.numPages, pagesMax || 50);
   let fullText = '';
@@ -70,7 +95,7 @@ async function processPDF(body, res) {
       let discipline = 'Unknown';
       const pt = pageText.toLowerCase();
       if (pt.includes('floor plan') || pt.includes('elevation') || pt.includes('ceiling') || pt.includes('architectural')) discipline = 'Architectural';
-      else if (pt.includes('structural') || pt.includes('framing') || pt.includes('foundation') || pt.includes('beam')) discipline = 'Structural';
+      else if (pt.includes('structural') || pt.includes('framing') || pt.includes('beam')) discipline = 'Structural';
       else if (pt.includes('mechanical') || pt.includes('hvac') || pt.includes('ductwork') || pt.includes('plumbing') || pt.includes('vav')) discipline = 'Mechanical';
       else if (pt.includes('electrical') || pt.includes('panel') || pt.includes('circuit') || pt.includes('conduit')) discipline = 'Electrical';
       else if (pt.includes('civil') || pt.includes('grading') || pt.includes('drainage')) discipline = 'Civil';
@@ -98,8 +123,16 @@ async function legacyProxy(body, res) {
 
   const r = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
-    body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 16000, messages: body.messages })
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01'
+    },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 16000,
+      messages: body.messages
+    })
   });
 
   const data = await r.json();
