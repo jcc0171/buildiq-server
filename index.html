@@ -1408,146 +1408,78 @@ async function startAnalysis() {
   const totalPages = validFiles.reduce((a,f) => a + f.pages, 0);
 
   logLine('// PlanIQ Pro AI Engine v6.0 — Initialized', 'highlight');
-  logLine(`// Sending ${totalPages} pages to server for processing...`);
+  logLine(`// Reading ${totalPages} sheets...`);
   await delay(200);
 
-  // ── Send raw PDF to server for processing ──
-  // Server extracts text + renders schedules at full resolution
-  // No browser compression, no payload limits, no skipped pages
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
   let fullText = '';
-  let sheetList = [];
-  let scheduleImages = [];
+  const sheetList = [];
+  const scheduleImages = [];
 
-  try {
-    // Convert raw file to base64 for server upload
-    const file = validFiles[0].rawFile;
-    const arrayBuffer = await file.arrayBuffer();
-    const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
+  // Pro plan — raised limits across the board
+  const IMG_SCALE = 2.0;       // was 1.5 — full 2x resolution
+  const IMG_QUALITY = 0.92;    // was 0.82 — sharper images
+  const MAX_SCHEDULE_IMAGES = 16; // was 6 — catch all schedule pages
+  const MAX_IMAGE_PAYLOAD_BYTES = 8 * 1024 * 1024; // was 3MB — now 8MB
 
-    logLine('// Uploading to server for full-resolution processing...', 'highlight');
-    await delay(100);
+  for (const f of validFiles) {
+    if (!f.pageData || f.pageData.length === 0) {
+      if (f.text) fullText += f.text + '\n\n';
+      continue;
+    }
 
-    const serverResp = await fetch(PROXY_URL, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        pdfBase64: base64,
-        userId: STATE.userId,
-        plan: STATE.plan,
-        rfiMax,
-        pagesMax: STATE.pagesMax
-      })
-    });
-
-    if (!serverResp.ok) throw new Error('Server processing failed: ' + serverResp.status);
-
-    const processed = await serverResp.json();
-    if (processed.error) throw new Error('Server error: ' + processed.error);
-    fullText = processed.fullText;
-    sheetList = processed.sheetList;
-
-    logLine(`// ✓ ${processed.totalPages} sheets read (server-side, full resolution)`, 'highlight');
-
-    // ── Render schedule pages as images browser-side ──
-    // Server identified which pages need visual rendering.
-    // Browser renders just those pages at high quality.
-    // This is fast since it's only schedule pages, not all pages.
-    const schedulePageNums = processed.sheetList.filter(s => s.needsImage);
-    if (schedulePageNums.length > 0) {
-      logLine(`// Rendering ${schedulePageNums.length} schedule/table page(s) visually...`, 'highlight');
+    const thinPages = f.pageData.filter(pg => pg.needsImage);
+    if (thinPages.length > 0) {
+      logLine(`// Detected ${thinPages.length} schedule/table page(s) in ${f.name} — rendering at 2x...`, 'highlight');
       await delay(50);
+    }
 
-      pdfjsLib.GlobalWorkerOptions.workerSrc =
-        'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
-      const IMG_SCALE = 2.0;
-      const IMG_QUALITY = 0.92;
-
+    if (thinPages.length > 0 && f.rawFile && scheduleImages.length < MAX_SCHEDULE_IMAGES) {
       try {
-        const arrayBuffer = await file.arrayBuffer();
+        const arrayBuffer = await f.rawFile.arrayBuffer();
         const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-
-        for (const sp of schedulePageNums) {
+        for (const pg of thinPages) {
+          if (scheduleImages.length >= MAX_SCHEDULE_IMAGES) break;
           try {
-            const page = await pdf.getPage(sp.pageNum);
+            const page = await pdf.getPage(pg.pageNum);
             const viewport = page.getViewport({ scale: IMG_SCALE });
             const canvas = document.createElement('canvas');
             canvas.width = viewport.width;
             canvas.height = viewport.height;
             await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
             const imgData = canvas.toDataURL('image/jpeg', IMG_QUALITY).split(',')[1];
-            scheduleImages.push({
-              pageNum: sp.pageNum,
-              sheetNum: sp.sheet,
-              discipline: sp.discipline,
-              imgData
-            });
-          } catch(e) { console.warn('Image render error page', sp.pageNum, e); }
+            const imgBytes = imgData.length * 0.75;
+            const currentBytes = scheduleImages.reduce((a, s) => a + s.imgData.length * 0.75, 0);
+            if (currentBytes + imgBytes > MAX_IMAGE_PAYLOAD_BYTES) {
+              logLine('// Image budget reached — remaining schedules read via text', 'highlight');
+              break;
+            }
+            scheduleImages.push({ pageNum: pg.pageNum, sheetNum: pg.sheetNum, discipline: pg.discipline, imgData });
+          } catch(e) { console.warn('Image render error page', pg.pageNum, e); }
         }
-      } catch(e) { console.warn('PDF open for images failed:', e); }
-
-      logLine(`// ✓ ${scheduleImages.length} schedule page(s) rendered at 2x resolution`, 'highlight');
+      } catch(e) { console.warn('PDF open error for images:', e); }
     }
 
-  } catch(err) {
-    // Fallback: do browser-side processing if server fails
-    console.warn('Server processing failed, falling back to browser:', err);
-    logLine(`// Server: ${err.message} — using browser fallback`, 'highlight');
-    await delay(200);
-
-    pdfjsLib.GlobalWorkerOptions.workerSrc =
-      'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
-
-    const IMG_SCALE = 1.5;
-    const IMG_QUALITY = 0.82;
-    const MAX_SCHEDULE_IMAGES = 6;
-    const MAX_IMAGE_PAYLOAD_BYTES = 3 * 1024 * 1024;
-
-    for (const f of validFiles) {
-      if (!f.pageData || f.pageData.length === 0) {
-        if (f.text) fullText += f.text + '\n\n';
-        continue;
-      }
-      const thinPages = f.pageData.filter(pg => pg.needsImage);
-      if (thinPages.length > 0 && f.rawFile && scheduleImages.length < MAX_SCHEDULE_IMAGES) {
-        try {
-          const arrayBuffer = await f.rawFile.arrayBuffer();
-          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
-          for (const pg of thinPages) {
-            if (scheduleImages.length >= MAX_SCHEDULE_IMAGES) break;
-            try {
-              const page = await pdf.getPage(pg.pageNum);
-              const viewport = page.getViewport({ scale: IMG_SCALE });
-              const canvas = document.createElement('canvas');
-              canvas.width = viewport.width;
-              canvas.height = viewport.height;
-              await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-              const imgData = canvas.toDataURL('image/jpeg', IMG_QUALITY).split(',')[1];
-              const imgBytes = imgData.length * 0.75;
-              const currentBytes = scheduleImages.reduce((a, s) => a + s.imgData.length * 0.75, 0);
-              if (currentBytes + imgBytes > MAX_IMAGE_PAYLOAD_BYTES) break;
-              scheduleImages.push({ pageNum: pg.pageNum, sheetNum: pg.sheetNum, discipline: pg.discipline, imgData });
-            } catch(e) { console.warn('Image render error page', pg.pageNum, e); }
-          }
-        } catch(e) { console.warn('PDF open error for images:', e); }
-      }
-      for (const pg of f.pageData) {
-        const hasImg = scheduleImages.some(s => s.pageNum === pg.pageNum && s.sheetNum === pg.sheetNum);
-        const entry = `=== SHEET: ${pg.sheetNum} | PAGE: ${pg.pageNum} | DISCIPLINE: ${pg.discipline}${hasImg ? ' | SCHEDULE — SEE IMAGE' : ''} ===\n${pg.text || '(see image)'}`;
-        fullText += entry + '\n\n';
-        sheetList.push({ sheet: pg.sheetNum, discipline: pg.discipline, pageNum: pg.pageNum });
-      }
+    for (const pg of f.pageData) {
+      const hasImg = scheduleImages.some(s => s.pageNum === pg.pageNum && s.sheetNum === pg.sheetNum);
+      const entry = `=== SHEET: ${pg.sheetNum} | PAGE: ${pg.pageNum} | DISCIPLINE: ${pg.discipline}${hasImg ? ' | SCHEDULE — SEE IMAGE' : ''} ===\n${pg.text || '(see image)'}`;
+      fullText += entry + '\n\n';
+      sheetList.push({ sheet: pg.sheetNum, discipline: pg.discipline, pageNum: pg.pageNum });
     }
+  }
 
-    const MAX_CHARS = 100000;
-    if (fullText.length > MAX_CHARS) {
-      fullText = fullText.slice(0, MAX_CHARS) + '\n\n[... additional pages truncated for length ...]';
-    }
+  // Raised text limit — Pro server handles larger payloads with 60s timeout
+  const MAX_CHARS = 150000;
+  if (fullText.length > MAX_CHARS) {
+    fullText = fullText.slice(0, MAX_CHARS) + '\n\n[... additional pages truncated for length ...]';
+  }
 
-    logLine(`// ✓ ${sheetList.length} sheets read (browser fallback)`, 'highlight');
-    if (scheduleImages.length > 0) {
-      logLine(`// ✓ ${scheduleImages.length} schedule page(s) rendered`, 'highlight');
-    }
+  const scheduleCount = scheduleImages.length;
+  logLine(`// ✓ ${sheetList.length} sheets read`, 'highlight');
+  if (scheduleCount > 0) {
+    logLine(`// ✓ ${scheduleCount} schedule/table page(s) rendered at 2x resolution`, 'highlight');
   }
   logLine('// Sending to AI for RFI analysis...', 'highlight');
   await delay(150);
