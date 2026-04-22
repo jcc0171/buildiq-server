@@ -21,7 +21,7 @@ export default async function handler(req, res) {
     const body = req.body || {};
     if (!body.messages) { res.status(400).json({ error: 'No messages provided' }); return; }
 
-    // ── Check upload limits (only on first pass) ──
+    // ── Check upload limits (only on first pass, not skipLimitCheck) ──
     if (body.userId && !body.skipLimitCheck) {
       const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
       const { data: profile, error: fetchError } = await supabase
@@ -36,7 +36,7 @@ export default async function handler(req, res) {
     const key = process.env.ANTHROPIC_API_KEY;
     if (!key) { res.status(500).json({ error: 'No API key' }); return; }
 
-    // ── Forward to Claude with full 60-second timeout ──
+    // ── Forward to Claude ──
     const r = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -45,7 +45,7 @@ export default async function handler(req, res) {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-opus-4-5',
         max_tokens: 16000,
         messages: body.messages
       })
