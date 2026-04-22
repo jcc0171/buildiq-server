@@ -1442,6 +1442,7 @@ async function startAnalysis() {
     if (!serverResp.ok) throw new Error('Server processing failed: ' + serverResp.status);
 
     const processed = await serverResp.json();
+    if (processed.error) throw new Error('Server error: ' + processed.error);
     fullText = processed.fullText;
     sheetList = processed.sheetList;
 
@@ -1491,7 +1492,7 @@ async function startAnalysis() {
   } catch(err) {
     // Fallback: do browser-side processing if server fails
     console.warn('Server processing failed, falling back to browser:', err);
-    logLine('// Server processing unavailable — using browser fallback...', 'highlight');
+    logLine(`// Server: ${err.message} — using browser fallback`, 'highlight');
     await delay(200);
 
     pdfjsLib.GlobalWorkerOptions.workerSrc =
