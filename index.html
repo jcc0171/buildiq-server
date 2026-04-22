@@ -1111,28 +1111,49 @@ async function startAnalysis() {
   // ── Helper: split a PDF into chunks of ~CHUNK_PAGES pages ──
   // Each chunk becomes its own valid PDF sent as a native document.
   // Target ~3.5MB per chunk — well under Vercel's 4.5MB limit after JSON wrapping.
-  const CHUNK_PAGES = 12;
+  // Adaptive chunk size — we measure each chunk after creation.
+  // Target max 3MB base64 per chunk (safe under Vercel's ~4.5MB limit).
+  // Start with 5 pages, shrink if chunk is too big.
+  const TARGET_CHUNK_B64_BYTES = 3 * 1024 * 1024; // 3MB
+  const MAX_PAGES_START = 5;
 
-  async function splitPDF(arrayBuffer, totalPgs) {
+  async function splitPDF(arrayBuffer, totalPgs, logLine) {
     const { PDFDocument } = PDFLib;
     const srcDoc = await PDFDocument.load(arrayBuffer);
     const chunks = []; // [{ base64, startPage, endPage }]
+    let pageIdx = 0;
 
-    for (let start = 0; start < totalPgs; start += CHUNK_PAGES) {
-      const end = Math.min(start + CHUNK_PAGES, totalPgs);
-      const chunkDoc = await PDFDocument.create();
-      const pageIndices = [];
-      for (let i = start; i < end; i++) pageIndices.push(i);
-      const copiedPages = await chunkDoc.copyPages(srcDoc, pageIndices);
-      copiedPages.forEach(p => chunkDoc.addPage(p));
-      const chunkBytes = await chunkDoc.save();
-      // Convert to base64
-      let binary = '';
-      const bytes = new Uint8Array(chunkBytes);
-      for (let i = 0; i < bytes.length; i += 8192) {
-        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+    while (pageIdx < totalPgs) {
+      let chunkSize = Math.min(MAX_PAGES_START, totalPgs - pageIdx);
+      let chunkBase64 = '';
+
+      // Try chunk, shrink if too big
+      while (chunkSize >= 1) {
+        const end = Math.min(pageIdx + chunkSize, totalPgs);
+        const chunkDoc = await PDFDocument.create();
+        const indices = [];
+        for (let i = pageIdx; i < end; i++) indices.push(i);
+        const copied = await chunkDoc.copyPages(srcDoc, indices);
+        copied.forEach(p => chunkDoc.addPage(p));
+        const chunkBytes = await chunkDoc.save();
+        let binary = '';
+        const bytes = new Uint8Array(chunkBytes);
+        for (let i = 0; i < bytes.length; i += 8192) {
+          binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+        }
+        chunkBase64 = btoa(binary);
+
+        const b64Size = chunkBase64.length;
+        if (b64Size <= TARGET_CHUNK_B64_BYTES || chunkSize === 1) {
+          const sizeMB = (b64Size / 1024 / 1024).toFixed(1);
+          if (logLine) logLine(`//   Chunk: pages ${pageIdx+1}–${end} = ${sizeMB}MB`);
+          chunks.push({ base64: chunkBase64, startPage: pageIdx + 1, endPage: end });
+          pageIdx = end;
+          break;
+        }
+        // Too big — try one fewer page
+        chunkSize--;
       }
-      chunks.push({ base64: btoa(binary), startPage: start + 1, endPage: end });
     }
     return chunks;
   }
@@ -1205,7 +1226,7 @@ HIGH — blocks construction, life safety, requires slab/underground work, equip
 MEDIUM — needs resolution before that trade starts, doesn't block current work
 LOW — can be resolved mid-construction without delay
 
-Return UP TO ${Math.ceil(rfiMax / 2) + 2} RFIs for this section. Return FEWER if fewer real issues exist. Never pad.
+Return UP TO ${Math.ceil(rfiMax / 3) + 2} RFIs for this section. Return FEWER if fewer real issues exist. Never pad.
 
 RESPOND ONLY WITH A VALID JSON ARRAY — no preamble, no markdown:
 [
@@ -1231,7 +1252,7 @@ RESPOND ONLY WITH A VALID JSON ARRAY — no preamble, no markdown:
       const ab = await f.rawFile.arrayBuffer();
       let chunks;
       try {
-        chunks = await splitPDF(ab, f.pages);
+        chunks = await splitPDF(ab, f.pages, logLine);
       } catch(splitErr) {
         logLine(`// Split error: ${splitErr.message}`, 'error');
         throw splitErr;
