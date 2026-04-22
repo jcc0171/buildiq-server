@@ -1108,11 +1108,7 @@ async function startAnalysis() {
   logLine(`// ${validFiles.length} file(s) · ${totalPages} pages total`);
   await delay(200);
 
-  // ── Helper: split a PDF into chunks of ~CHUNK_PAGES pages ──
-  // Each chunk becomes its own valid PDF sent as a native document.
-  // Target ~3.5MB per chunk — well under Vercel's 4.5MB limit after JSON wrapping.
-  // Adaptive chunk size — we measure each chunk after creation.
-  // Target max 3MB base64 per chunk (safe under Vercel's ~4.5MB limit).
+  // ── Adaptive PDF splitter — measures each chunk, stays under 3MB ──
   // Start with 5 pages, shrink if chunk is too big.
   const TARGET_CHUNK_B64_BYTES = 3 * 1024 * 1024; // 3MB
   const MAX_PAGES_START = 5;
@@ -1248,7 +1244,7 @@ RESPOND ONLY WITH A VALID JSON ARRAY — no preamble, no markdown:
     let isFirstChunk = true;
 
     for (const f of validFiles) {
-      logLine(`// Splitting: ${f.name} into ${Math.ceil(f.pages / CHUNK_PAGES)} chunk(s)...`, 'highlight');
+      logLine(`// Splitting: ${f.name} (${f.pages} pages)...`, 'highlight');
       const ab = await f.rawFile.arrayBuffer();
       let chunks;
       try {
