@@ -650,7 +650,7 @@ body::before {
         <div class="upload-label" id="resultsStepLabel">// Step 2 of 2 — RFI Analysis</div>
         <div class="analysis-title" id="analysisTitle">ANALYZING<br>DRAWINGS...</div>
         <div class="analysis-sub" id="analysisSub">AI is reading your construction documents</div>
-        <div id="analysisTimeHint" style="font-family:var(--mono);font-size:11px;color:var(--amber);opacity:0.7;margin-top:8px;letter-spacing:0.5px;">⏱ Typical analysis time: 30–90 seconds</div>
+        <div id="analysisTimeHint" style="font-family:var(--mono);font-size:11px;color:var(--amber);opacity:0.7;margin-top:8px;letter-spacing:0.5px;">⏱ Large drawing sets may take 2-3 minutes — schedules are being read individually for accuracy</div>
       </div>
       <div style="display:flex; flex-direction:column; align-items:flex-end; gap:12px; flex-shrink:0;">
         <div class="analysis-status" id="analysisStatus">
@@ -1418,11 +1418,11 @@ async function startAnalysis() {
   const sheetList = [];
   const scheduleImages = [];
 
-  // Pro plan — raised limits across the board
-  const IMG_SCALE = 2.0;       // was 1.5 — full 2x resolution
-  const IMG_QUALITY = 0.92;    // was 0.82 — sharper images
-  const MAX_SCHEDULE_IMAGES = 16; // was 6 — catch all schedule pages
-  const MAX_IMAGE_PAYLOAD_BYTES = 8 * 1024 * 1024; // was 3MB — now 8MB
+  // Pro plan — optimized for maximum schedule coverage within payload limits
+  const IMG_SCALE = 1.6;       // balance between quality and payload size
+  const IMG_QUALITY = 0.85;    // good quality without bloating payload
+  const MAX_SCHEDULE_IMAGES = 16; // catch all schedule pages
+  const MAX_IMAGE_PAYLOAD_BYTES = 4 * 1024 * 1024; // 4MB — safe under Vercel's limit
 
   for (const f of validFiles) {
     if (!f.pageData || f.pageData.length === 0) {
@@ -1511,18 +1511,87 @@ async function startAnalysis() {
   }
 
   try {
-    // ════════════════════════════════════════
-    // PASS 1 — Primary RFI Analysis
-    // Send all extracted text in one call.
-    // ════════════════════════════════════════
     const disciplines = [...new Set(sheetList.map(s => s.discipline).filter(d => d !== 'Unknown'))];
 
+    // ════════════════════════════════════════
+    // PRE-PASS — Schedule Image Extraction
+    // Each schedule page is sent to Claude
+    // individually — one call per image.
+    // No payload limit issues. Claude reads
+    // each table/schedule at full resolution
+    // and returns the data as clean text.
+    // This data is injected into the main
+    // text corpus before Pass 1 runs.
+    // ════════════════════════════════════════
+    let enrichedText = fullText;
+
+    if (scheduleImages.length > 0) {
+      logLine(`// Reading ${scheduleImages.length} schedule/table page(s) individually...`, 'highlight');
+      await delay(100);
+
+      for (const si of scheduleImages) {
+        try {
+          logLine(`// Reading schedule: Sheet ${si.sheetNum} (Page ${si.pageNum})...`, 'highlight');
+
+          const schedulePrompt = `You are a construction document reader. This image is a schedule or table page from a set of construction drawings.
+
+Sheet: ${si.sheetNum} | Page: ${si.pageNum} | Discipline: ${si.discipline}
+
+Read this schedule/table completely and accurately. Extract ALL data visible in the image including:
+- Equipment tags, model numbers, sizes, capacities
+- Electrical loads, voltages, phases, amperage, circuit numbers
+- Mechanical CFM, tonnage, kW, GPM values
+- Panel schedules with circuit numbers and loads
+- VAV box schedules with airflow settings
+- Any other tabular data present
+
+Return the data as clean structured text that can be read by another AI for RFI analysis.
+Format: list each row/item clearly with all column values.
+Be precise with numbers — do not estimate or round.
+RETURN ONLY THE EXTRACTED DATA, no commentary.`;
+
+          const scheduleContent = [
+            { type: 'text', text: schedulePrompt },
+            { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: si.imgData } }
+          ];
+
+          const scheduleText = await callClaude([{ role: 'user', content: scheduleContent }], false);
+
+          if (scheduleText && scheduleText.length > 20) {
+            // Inject extracted schedule data into the text corpus
+            const injection = `\n\n=== SCHEDULE DATA EXTRACTED FROM IMAGE: Sheet ${si.sheetNum} | Page ${si.pageNum} | Discipline: ${si.discipline} ===\n${scheduleText}\n=== END SCHEDULE DATA ===\n\n`;
+            enrichedText += injection;
+            logLine(`// ✓ Sheet ${si.sheetNum} schedule data extracted`, 'highlight');
+          }
+
+          await delay(50);
+        } catch(e) {
+          console.warn(`Schedule extraction failed for page ${si.pageNum}:`, e);
+          logLine(`// Schedule ${si.sheetNum} — text fallback`, 'highlight');
+        }
+      }
+
+      logLine('// ✓ All schedule data extracted — running full analysis...', 'highlight');
+      await delay(100);
+    }
+
+    // Trim enriched text to token limits
+    const MAX_ENRICHED_CHARS = 150000;
+    if (enrichedText.length > MAX_ENRICHED_CHARS) {
+      enrichedText = enrichedText.slice(0, MAX_ENRICHED_CHARS) + '\n\n[... additional content truncated ...]';
+    }
+
+    // ════════════════════════════════════════
+    // PASS 1 — Primary RFI Analysis
+    // Text only — no images in this call.
+    // Schedule data already injected above.
+    // ════════════════════════════════════════
     const primaryPrompt = `You are a Senior Construction Project Manager and RFI specialist with 30 years of experience on commercial projects including schools, hospitals, and government buildings.
 
-You have been given the full extracted text from a ${totalPages}-page construction drawing set. The disciplines present are: ${disciplines.join(', ') || 'Mixed'}.${scheduleImages.length > 0 ? `\n\nIMPORTANT: ${scheduleImages.length} schedule/table sheet(s) had limited text extraction. Their images are attached AFTER this text prompt — read them carefully. These sheets contain critical equipment schedules, panel schedules, VAV box schedules, and similar data that must be cross-referenced against the plans.` : ''}
+You have been given the full extracted text from a ${totalPages}-page construction drawing set. The disciplines present are: ${disciplines.join(', ') || 'Mixed'}.${scheduleImages.length > 0 ? `\n\nIMPORTANT: ${scheduleImages.length} schedule/table page(s) were individually read by AI and their data has been injected into the drawing text below under "SCHEDULE DATA EXTRACTED FROM IMAGE" sections. Cross-reference these schedule values carefully against the plan sheets.` : ''}
 
-PROJECT DRAWING TEXT:
-${fullText}
+PROJECT DRAWING TEXT (includes extracted schedule data):
+${enrichedText}
 
 YOUR TASK:
 Review this drawing set and identify ONLY legitimate, job-site-ready RFIs — items that a contractor, subcontractor, or PM would actually send to the engineer of record for clarification or resolution before or during construction.
@@ -1535,6 +1604,7 @@ WHAT MAKES A REAL RFI:
 - A coordination gap between disciplines at a specific location (e.g. MEP vs structural at a named room or grid)
 - Demolition scope that requires field verification of existing conditions before proceeding
 - Underground or concealed work where existing conditions are unknown and must be confirmed
+- A value on a plan that conflicts with the same value on a schedule (e.g. CFM on plan vs CFM in schedule)
 
 WHAT IS NOT AN RFI:
 - Observations that general plans don't show mechanical details (that is normal and expected)
@@ -1598,20 +1668,7 @@ RESPOND ONLY WITH A VALID JSON ARRAY — no other text, no markdown:
   }
 ]`;
 
-    // Build message content: text prompt first, then schedule images if any
-    const pass1Content = [{ type: 'text', text: primaryPrompt }];
-    for (const si of scheduleImages) {
-      pass1Content.push({
-        type: 'text',
-        text: `\n--- SCHEDULE/TABLE IMAGE: Sheet ${si.sheetNum}, Page ${si.pageNum}, Discipline: ${si.discipline} ---`
-      });
-      pass1Content.push({
-        type: 'image',
-        source: { type: 'base64', media_type: 'image/jpeg', data: si.imgData }
-      });
-    }
-
-    const pass1Text = await callClaude([{ role: 'user', content: pass1Content }], true);
+    const pass1Text = await callClaude([{ role: 'user', content: [{ type: 'text', text: primaryPrompt }] }], true);
     const pass1RFIs = parseRFIArray(pass1Text);
     logLine(`// ✓ Primary analysis complete — ${pass1RFIs.length} candidate RFI(s)`, 'highlight');
     await delay(100);
@@ -1635,7 +1692,7 @@ RESPOND ONLY WITH A VALID JSON ARRAY — no other text, no markdown:
 The drawing set contains these sheets: ${sheetSummary}
 
 Here is the full drawing text again for reference:
-${fullText.slice(0, 60000)}
+${enrichedText.slice(0, 60000)}
 
 You have already identified these RFIs in a prior review:
 ${pass1RFIs.map(r => `- ${r.title} (${r.page_ref})`).join('\n')}
@@ -1707,7 +1764,7 @@ RESPOND ONLY WITH A VALID JSON ARRAY using the same format as before.`;
           text: `You are a senior construction document auditor. Your job is to quality-control a set of AI-generated RFIs before they are sent to a paying customer. Your standard is high — a contractor will stake their reputation on these RFIs.
 
 Here is the full drawing text that was used to generate these RFIs:
-${fullText.slice(0, 40000)}
+${enrichedText.slice(0, 40000)}
 
 Here are the RFIs to audit:
 ${JSON.stringify(finalRFIs, null, 2)}
