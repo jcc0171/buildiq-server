@@ -1123,7 +1123,7 @@ async function startAnalysis() {
       const chunkDoc = await PDFDocument.create();
       const pageIndices = [];
       for (let i = start; i < end; i++) pageIndices.push(i);
-      const copiedPages = await chunkDoc.copyPagesFromDocument(srcDoc, pageIndices);
+      const copiedPages = await chunkDoc.copyPages(srcDoc, pageIndices);
       copiedPages.forEach(p => chunkDoc.addPage(p));
       const chunkBytes = await chunkDoc.save();
       // Convert to base64
