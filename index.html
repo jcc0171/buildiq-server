@@ -1077,12 +1077,12 @@ function updateAnalyzeButton() {
 }
 
 /* ═══════════════════════════════════════════
-   AI ANALYSIS — VERCEL BLOB ENGINE v14
-   Browser uploads PDF to Vercel Blob storage
-   (no size limit, built into Vercel Pro).
-   Server fetches from Blob → Anthropic Files
-   API → Claude sees entire set at once.
-   One call. Full cross-reference. ~90 seconds.
+   AI ANALYSIS — BLOB PUT ENGINE v15
+   Step 1: GET token from server
+   Step 2: PUT PDF directly to Vercel Blob
+           using plain fetch — no library
+   Step 3: POST blobUrl to analyze endpoint
+   Claude sees entire set. Full cross-ref.
 ═══════════════════════════════════════════ */
 async function startAnalysis() {
   showSection('sec-results');
@@ -1104,7 +1104,7 @@ async function startAnalysis() {
   const validFiles = STATE.files.filter(f => f.ok);
   const totalPages = validFiles.reduce((a,f) => a + f.pages, 0);
 
-  logLine('// PlanIQ Pro — Vercel Blob Engine v14', 'highlight');
+  logLine('// PlanIQ Pro — Blob Upload Engine v15', 'highlight');
   logLine(`// ${validFiles.length} file(s) · ${totalPages} pages`);
   await delay(200);
 
@@ -1118,26 +1118,49 @@ async function startAnalysis() {
   }
 
   try {
+    // ── Step 1: Get blob upload token from server ──
+    logLine('// Connecting to server...', 'highlight');
+    const tokenRes = await fetch(`${BASE_URL}/blob`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'get_token' })
+    });
+    if (!tokenRes.ok) throw new Error('Could not get upload token');
+    const { uploadUrl, token } = await tokenRes.json();
+    logLine('// ✓ Connected', 'success');
+
     const allRFIs = [];
 
     for (const f of validFiles) {
-      // ── Step 1: Upload directly to Vercel Blob ──
-      // @vercel/blob supports client uploads with no size limit
-      logLine(`// Uploading: ${f.name} (${f.size}) → Vercel Blob...`, 'highlight');
+      // ── Step 2: PUT PDF directly to Vercel Blob ──
+      logLine(`// Uploading: ${f.name} (${f.size})...`, 'highlight');
 
-      const { upload } = await import('https://esm.sh/@vercel/blob/client');
+      const safeName = encodeURIComponent(f.name.replace(/[<>:"|?*\\\/]/g, '-'));
+      const putUrl   = `https://blob.vercel-storage.com/${safeName}?token=${token}`;
 
-      const blobResult = await upload(f.name, f.rawFile, {
-        access: 'public',
-        handleUploadUrl: `${BASE_URL}/blob`,
+      const putRes = await fetch(putUrl, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/pdf',
+          'x-content-type': 'application/pdf',
+        },
+        body: f.rawFile
       });
 
-      const blobUrl = blobResult.url;
+      if (!putRes.ok) {
+        const errText = await putRes.text().catch(() => putRes.status);
+        throw new Error(`Blob upload failed: ${errText}`);
+      }
+
+      const putData = await putRes.json().catch(() => null);
+      const blobUrl = putData?.url || putRes.headers?.get('location');
+      if (!blobUrl) throw new Error('No blob URL returned');
+
       logLine(`// ✓ Stored — sending to Claude...`, 'success');
       logLine(`// Claude reading all ${f.pages} pages at once...`);
-      logLine(`// Cross-referencing MEP, structural, architectural...`);
+      logLine(`// Cross-referencing MEP + structural + architectural...`);
 
-      // ── Step 2: Tell server to analyze (tiny JSON — just the blobUrl) ──
+      // ── Step 3: Analyze (server fetches from blob → Anthropic → RFIs) ──
       const analyzeRes = await fetch(`${BASE_URL}/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1158,11 +1181,11 @@ async function startAnalysis() {
       const analyzeData = await analyzeRes.json();
       const resultText  = analyzeData.content?.[0]?.text || '';
       const rfis        = parseRFIArray(resultText);
-      logLine(`// ✓ ${f.name}: ${rfis.length} RFI(s) found`, 'success');
+      logLine(`// ✓ ${rfis.length} RFI(s) found`, 'success');
       allRFIs.push(...rfis);
     }
 
-    // ── Deduplicate, sort, finalize ──
+    // ── Finalize ──
     const seen  = new Set();
     const order = { high: 0, medium: 1, low: 2 };
     const finalRFIs = allRFIs
@@ -1188,7 +1211,6 @@ async function startAnalysis() {
         confidence: 'high'
       }));
 
-    // ── Record upload ──
     if (STATE.userId) {
       try {
         const cr = await fetch(`${BASE_URL}/analyze`, {
@@ -1197,9 +1219,7 @@ async function startAnalysis() {
           body: JSON.stringify({ action: 'count_upload', userId: STATE.userId })
         });
         if (cr.status === 403) throw new Error('Upload limit reached. Please upgrade your plan.');
-      } catch(e) {
-        if (e.message.includes('limit')) throw e;
-      }
+      } catch(e) { if (e.message.includes('limit')) throw e; }
     }
 
     STATE.rfis = finalRFIs;
