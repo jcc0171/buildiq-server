@@ -1,8 +1,5 @@
-import { handleUpload } from '@vercel/blob/client';
-import { createClient } from '@supabase/supabase-js';
-
 export const config = {
-  api: { bodyParser: false }
+  api: { bodyParser: true }
 };
 
 export default async function handler(req, res) {
@@ -10,21 +7,12 @@ export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') { res.status(204).end(); return; }
+  if (req.method !== 'POST') { res.status(405).end(); return; }
 
-  const jsonResponse = await handleUpload({
-    request: req,
-    token: process.env.BLOB_READ_WRITE_TOKEN,
-    onBeforeGenerateToken: async (pathname) => {
-      // Allow PDF uploads only
-      return {
-        allowedContentTypes: ['application/pdf'],
-        maximumSizeInBytes: 100 * 1024 * 1024, // 100MB
-      };
-    },
-    onUploadCompleted: async ({ blob }) => {
-      console.log('Blob uploaded:', blob.url);
-    },
-  });
+  const token = process.env.BLOB_READ_WRITE_TOKEN;
+  if (!token) { res.status(500).json({ error: 'No blob token configured' }); return; }
 
-  return res.status(200).json(jsonResponse);
+  // Return the token so browser can PUT directly to Vercel Blob
+  // Vercel Blob accepts PUT requests with ?token= from any origin
+  res.status(200).json({ token });
 }
