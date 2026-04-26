@@ -1077,13 +1077,12 @@ function updateAnalyzeButton() {
 }
 
 /* ═══════════════════════════════════════════
-   AI ANALYSIS — DIRECT FILES ENGINE v13
-   Browser fetches API key from Vercel (GET).
-   Browser uploads PDF directly to Anthropic
-   Files API (CORS header unlocks this).
-   Browser sends file_id to Vercel analyze.
-   Vercel calls Claude with file_id → RFIs.
-   No size limits. No chunking. ~90 seconds.
+   AI ANALYSIS — VERCEL BLOB ENGINE v14
+   Browser uploads PDF to Vercel Blob storage
+   (no size limit, built into Vercel Pro).
+   Server fetches from Blob → Anthropic Files
+   API → Claude sees entire set at once.
+   One call. Full cross-reference. ~90 seconds.
 ═══════════════════════════════════════════ */
 async function startAnalysis() {
   showSection('sec-results');
@@ -1105,7 +1104,7 @@ async function startAnalysis() {
   const validFiles = STATE.files.filter(f => f.ok);
   const totalPages = validFiles.reduce((a,f) => a + f.pages, 0);
 
-  logLine('// PlanIQ Pro — Direct Files Engine v13', 'highlight');
+  logLine('// PlanIQ Pro — Vercel Blob Engine v14', 'highlight');
   logLine(`// ${validFiles.length} file(s) · ${totalPages} pages`);
   await delay(200);
 
@@ -1119,57 +1118,31 @@ async function startAnalysis() {
   }
 
   try {
-    // ── Step 1: Get API key from Vercel ──
-    logLine('// Connecting to server...', 'highlight');
-    const keyRes = await fetch(`${BASE_URL}/analyze`);
-    if (!keyRes.ok) throw new Error('Could not connect to server');
-    const keyData = await keyRes.json();
-    const apiKey = keyData.apiKey;
-    if (!apiKey) throw new Error('No API key returned from server');
-    logLine('// ✓ Connected', 'success');
-
     const allRFIs = [];
 
     for (const f of validFiles) {
-      // ── Step 2: Upload PDF directly to Anthropic Files API ──
-      // Uses anthropic-dangerous-direct-browser-access header
-      // which Anthropic officially supports for browser calls.
-      // No Vercel size limit — goes straight to Anthropic.
-      logLine(`// Uploading: ${f.name} (${f.size}) → Anthropic...`, 'highlight');
+      // ── Step 1: Upload directly to Vercel Blob ──
+      // @vercel/blob supports client uploads with no size limit
+      logLine(`// Uploading: ${f.name} (${f.size}) → Vercel Blob...`, 'highlight');
 
-      const formData = new FormData();
-      formData.append('file', f.rawFile, f.name);
-      formData.append('purpose', 'assistants');
+      const { upload } = await import('https://esm.sh/@vercel/blob/client');
 
-      const uploadRes = await fetch('https://api.anthropic.com/v1/files', {
-        method: 'POST',
-        headers: {
-          'x-api-key': apiKey,
-          'anthropic-version': '2023-06-01',
-          'anthropic-beta': 'files-api-2025-04-14',
-          'anthropic-dangerous-direct-browser-access': 'true',
-        },
-        body: formData
+      const blobResult = await upload(f.name, f.rawFile, {
+        access: 'public',
+        handleUploadUrl: `${BASE_URL}/blob`,
       });
 
-      if (!uploadRes.ok) {
-        const err = await uploadRes.json().catch(() => ({}));
-        throw new Error(err?.error?.message || `Upload failed: ${uploadRes.status}`);
-      }
+      const blobUrl = blobResult.url;
+      logLine(`// ✓ Stored — sending to Claude...`, 'success');
+      logLine(`// Claude reading all ${f.pages} pages at once...`);
+      logLine(`// Cross-referencing MEP, structural, architectural...`);
 
-      const uploadData = await uploadRes.json();
-      const fileId = uploadData.id;
-      if (!fileId) throw new Error('No file ID returned from Anthropic');
-
-      logLine(`// ✓ Uploaded — Claude reading all ${f.pages} pages at once...`, 'success');
-      logLine(`// Cross-referencing MEP + structural + architectural simultaneously...`);
-
-      // ── Step 3: Analyze via Vercel (tiny JSON — just the file_id) ──
+      // ── Step 2: Tell server to analyze (tiny JSON — just the blobUrl) ──
       const analyzeRes = await fetch(`${BASE_URL}/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          fileId,
+          blobUrl,
           fileName: f.name,
           totalPages: f.pages,
           rfiMax,
@@ -1215,7 +1188,7 @@ async function startAnalysis() {
         confidence: 'high'
       }));
 
-    // ── Record upload in Supabase ──
+    // ── Record upload ──
     if (STATE.userId) {
       try {
         const cr = await fetch(`${BASE_URL}/analyze`, {
