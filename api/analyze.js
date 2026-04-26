@@ -19,7 +19,9 @@ export default async function handler(req, res) {
   if (!key) { res.status(500).json({ error: 'No API key' }); return; }
 
   if (req.method === 'GET') {
-    res.status(200).json({ ok: true });
+    // Return API key so browser can upload directly to Anthropic Files API
+    // Browser uses anthropic-dangerous-direct-browser-access header for CORS
+    res.status(200).json({ apiKey: key });
     return;
   }
 
