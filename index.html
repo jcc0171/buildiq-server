@@ -1077,12 +1077,12 @@ function updateAnalyzeButton() {
 }
 
 /* ═══════════════════════════════════════════
-   AI ANALYSIS — BLOB PUT ENGINE v15
-   Step 1: GET token from server
-   Step 2: PUT PDF directly to Vercel Blob
-           using plain fetch — no library
-   Step 3: POST blobUrl to analyze endpoint
-   Claude sees entire set. Full cross-ref.
+   AI ANALYSIS — STREAM UPLOAD ENGINE v16
+   Browser streams PDF to /api/upload which
+   pipes it directly to Vercel Blob storage.
+   bodyParser:false = no size limit.
+   Server then fetches blob → Anthropic Files
+   API → Claude sees entire set → RFIs.
 ═══════════════════════════════════════════ */
 async function startAnalysis() {
   showSection('sec-results');
@@ -1104,7 +1104,7 @@ async function startAnalysis() {
   const validFiles = STATE.files.filter(f => f.ok);
   const totalPages = validFiles.reduce((a,f) => a + f.pages, 0);
 
-  logLine('// PlanIQ Pro — Blob Upload Engine v15', 'highlight');
+  logLine('// PlanIQ Pro — Stream Upload Engine v16', 'highlight');
   logLine(`// ${validFiles.length} file(s) · ${totalPages} pages`);
   await delay(200);
 
@@ -1118,50 +1118,36 @@ async function startAnalysis() {
   }
 
   try {
-    // ── Step 1: Get blob upload token from server ──
-    logLine('// Connecting to server...', 'highlight');
-    const tokenRes = await fetch(`${BASE_URL}/blob`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'get_token' })
-    });
-    if (!tokenRes.ok) throw new Error('Could not get upload token');
-    const { uploadUrl, token } = await tokenRes.json();
-    logLine('// ✓ Connected', 'success');
-
     const allRFIs = [];
 
     for (const f of validFiles) {
-      // ── Step 2: PUT PDF directly to Vercel Blob ──
+      // ── Step 1: Stream PDF to /api/upload → Vercel Blob ──
+      // bodyParser:false on the server means the raw body streams
+      // directly to Blob storage — no buffering, no 4.5MB limit
       logLine(`// Uploading: ${f.name} (${f.size})...`, 'highlight');
 
-      const safeName = encodeURIComponent(f.name.replace(/[<>:"|?*\\\/]/g, '-'));
-      const putUrl   = `https://blob.vercel-storage.com/${safeName}`;
-
-      const putRes = await fetch(putUrl, {
-        method: 'PUT',
+      const uploadRes = await fetch(`${BASE_URL}/upload`, {
+        method: 'POST',
         headers: {
-          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/pdf',
-          'x-content-type': 'application/pdf',
+          'X-File-Name': f.name,
         },
-        body: f.rawFile
+        body: f.rawFile, // Browser sends the File object directly as body
+        duplex: 'half',  // Required for streaming body in modern browsers
       });
 
-      if (!putRes.ok) {
-        const errText = await putRes.text().catch(() => putRes.status);
-        throw new Error(`Blob upload failed: ${errText}`);
+      if (!uploadRes.ok) {
+        const err = await uploadRes.json().catch(() => ({}));
+        throw new Error(err.error || `Upload failed: ${uploadRes.status}`);
       }
 
-      const putData = await putRes.json().catch(() => null);
-      const blobUrl = putData?.url || putRes.headers?.get('location');
+      const { blobUrl } = await uploadRes.json();
       if (!blobUrl) throw new Error('No blob URL returned');
 
-      logLine(`// ✓ Stored — sending to Claude...`, 'success');
-      logLine(`// Claude reading all ${f.pages} pages at once...`);
+      logLine(`// ✓ Stored — Claude reading all ${f.pages} pages...`, 'success');
       logLine(`// Cross-referencing MEP + structural + architectural...`);
 
-      // ── Step 3: Analyze (server fetches from blob → Anthropic → RFIs) ──
+      // ── Step 2: Analyze (server fetches blob → Anthropic → RFIs) ──
       const analyzeRes = await fetch(`${BASE_URL}/analyze`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
