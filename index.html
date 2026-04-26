@@ -1136,11 +1136,12 @@ async function startAnalysis() {
       logLine(`// Uploading: ${f.name} (${f.size})...`, 'highlight');
 
       const safeName = encodeURIComponent(f.name.replace(/[<>:"|?*\\\/]/g, '-'));
-      const putUrl   = `https://blob.vercel-storage.com/${safeName}?token=${token}`;
+      const putUrl   = `https://blob.vercel-storage.com/${safeName}`;
 
       const putRes = await fetch(putUrl, {
         method: 'PUT',
         headers: {
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/pdf',
           'x-content-type': 'application/pdf',
         },
