@@ -3,6 +3,9 @@
     "api/analyze.js": {
       "maxDuration": 60
     },
+    "api/upload.js": {
+      "maxDuration": 60
+    },
     "api/auth.js": {
       "maxDuration": 30
     }
