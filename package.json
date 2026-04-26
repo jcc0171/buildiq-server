@@ -1,8 +1,9 @@
 {
   "name": "buildiq-server",
-  "version": "7.0.0",
+  "version": "13.0.0",
   "dependencies": {
-    "@supabase/supabase-js": "^2.39.0"
+    "@supabase/supabase-js": "^2.39.0",
+    "@vercel/blob": "^0.27.0"
   },
   "engines": {
     "node": "24.x"
