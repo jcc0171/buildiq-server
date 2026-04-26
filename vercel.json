@@ -1,19 +1,11 @@
 {
   "functions": {
-    "api/analyze.js": {
-      "maxDuration": 60
-    },
-    "api/upload.js": {
-      "maxDuration": 60
-    },
-    "api/auth.js": {
-      "maxDuration": 30
-    }
+    "api/analyze.js": { "maxDuration": 60 },
+    "api/upload.js":  { "maxDuration": 60 },
+    "api/blob.js":    { "maxDuration": 30 },
+    "api/auth.js":    { "maxDuration": 30 }
   },
   "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/$1"
-    }
+    { "src": "/api/(.*)", "dest": "/api/$1" }
   ]
 }
