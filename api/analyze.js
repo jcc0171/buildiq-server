@@ -42,39 +42,33 @@ export default async function handler(req, res) {
     if (!body.fileId) { res.status(400).json({ error: 'No fileId provided' }); return; }
     const { fileId, fileName, totalPages, rfiMax } = body;
 
-    const prompt = `You are a Senior Construction Project Manager and licensed architect with 30 years of experience on commercial, institutional, and industrial projects.
+    const prompt = `You are a Senior Construction Project Manager with 20 years of field experience on commercial, institutional, and industrial projects. You have reviewed thousands of drawing sets and written hundreds of RFIs. You know the difference between a real problem that stops work and a theoretical concern that resolves itself.
 
-You are reading a complete construction drawing set: "${fileName}" (${totalPages} pages). You can see every single page — floor plans, elevations, sections, details, ALL schedules (equipment, door, panel, finish, plumbing fixture schedules), and all other sheets.
+You are reviewing the complete drawing set: "${fileName}" (${totalPages} pages).
 
-Because you can see the ENTIRE drawing set at once, cross-reference every sheet against every other sheet. This is your core advantage — use it.
+YOUR JOB:
+Review these drawings the way you would before a pre-construction meeting. Find real RFIs — the kind you would actually send to the engineer of record because work cannot proceed or equipment cannot be ordered without resolution.
 
-CROSS-REFERENCE CHECKS TO PERFORM:
-1. Equipment tags on plans vs equipment schedules — CFM, kW, tons, GPM must match exactly
-2. Panel circuit numbers on plans vs panel schedules — loads and breaker sizes must match
-3. Duct or pipe routing vs structural framing at same grid locations — check for conflicts
-4. Detail keynotes called out on plans — do those detail sheets actually exist in this set?
-5. Door numbers on floor plans vs door schedule — sizes, hardware groups, fire ratings must match
-6. Notes saying "by others", "coordinate with EOR", "TBD", "verify in field" — is the required info anywhere in the set?
-7. Demolition scope — are any removed systems still shown as active on renovation drawings?
-8. Underground utilities — are existing conditions verified or marked unknown/TBD?
-9. Fire/smoke dampers at rated assemblies where new ductwork penetrates
-10. Egress widths, ADA clearances, door swings — do dimensions meet code?
+You are looking for UP TO ${rfiMax} RFIs. If the drawings are well-coordinated, return fewer. If only 3 real issues exist, return 3. Never manufacture issues to fill a quota.
 
-ONLY flag an RFI if:
-- Evidence is clearly visible somewhere in this drawing set
-- A real contractor would stop work or delay procurement because of it
-- You can cite the exact sheet number, tag, note number, or schedule row
+A REAL RFI meets all three of these:
+1. You can point to the exact sheet, note number, equipment tag, schedule row, or dimension where the problem exists
+2. A contractor would actually stop work or delay a procurement decision because of it
+3. It cannot be resolved by a reasonable field assumption or standard industry practice
 
-A false RFI wastes everyone's money and destroys trust. Only flag what you are certain about.
+DO NOT flag:
+- Issues you are inferring or assuming — only what you can see
+- Items that are normally resolved through shop drawing submittals
+- Generic coordination notes that are standard on every project
+- Anything you cannot cite with a specific sheet number and location
 
 PRIORITY:
-HIGH — blocks construction, life safety, slab/underground work, can't order equipment
-MEDIUM — needs resolution before that trade starts, doesn't block current work
-LOW — informational, no schedule impact
-
-Return UP TO ${rfiMax} RFIs. Return fewer if fewer real issues exist. Never pad.
+HIGH — blocks construction, life safety issue, underground/slab work required, equipment cannot be ordered
+MEDIUM — needs engineer response before that phase starts, doesn't block current work
+LOW — informational clarification, no schedule impact
 
 RESPOND ONLY WITH A VALID JSON ARRAY — no preamble, no markdown:
+
 [
   {
     "title": "Specific issue — what sheet and where",
