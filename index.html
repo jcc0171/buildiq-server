@@ -1077,12 +1077,13 @@ function updateAnalyzeButton() {
 }
 
 /* ═══════════════════════════════════════════
-   AI ANALYSIS — STREAM UPLOAD ENGINE v16
-   Browser streams PDF to /api/upload which
-   pipes it directly to Vercel Blob storage.
-   bodyParser:false = no size limit.
-   Server then fetches blob → Anthropic Files
-   API → Claude sees entire set → RFIs.
+   AI ANALYSIS — CLOUDFLARE ENGINE v17
+   Browser streams PDF to Cloudflare Worker
+   (no size limits — Cloudflare has none).
+   Worker uploads to Anthropic Files API,
+   returns file_id. Vercel calls Claude with
+   file_id — sees entire set at once.
+   Clean. Fast. Trustworthy.
 ═══════════════════════════════════════════ */
 async function startAnalysis() {
   showSection('sec-results');
@@ -1099,12 +1100,13 @@ async function startAnalysis() {
     streamLog.scrollTop = streamLog.scrollHeight;
   };
 
-  const BASE_URL   = 'https://buildiq-server.vercel.app/api';
+  const WORKER_URL = 'https://planiq-upload.jcgatorcentral.workers.dev';
+  const ANALYZE_URL = 'https://buildiq-server.vercel.app/api/analyze';
   const rfiMax     = STATE.plan === 'pro' ? 12 : 10;
   const validFiles = STATE.files.filter(f => f.ok);
   const totalPages = validFiles.reduce((a,f) => a + f.pages, 0);
 
-  logLine('// PlanIQ Pro — Stream Upload Engine v16', 'highlight');
+  logLine('// PlanIQ Pro — Cloudflare Engine v17', 'highlight');
   logLine(`// ${validFiles.length} file(s) · ${totalPages} pages`);
   await delay(200);
 
@@ -1121,19 +1123,17 @@ async function startAnalysis() {
     const allRFIs = [];
 
     for (const f of validFiles) {
-      // ── Step 1: Stream PDF to /api/upload → Vercel Blob ──
-      // bodyParser:false on the server means the raw body streams
-      // directly to Blob storage — no buffering, no 4.5MB limit
-      logLine(`// Uploading: ${f.name} (${f.size})...`, 'highlight');
+      // ── Step 1: Upload PDF via Cloudflare Worker ──
+      // No size limits. Worker forwards to Anthropic Files API.
+      logLine(`// Uploading: ${f.name} (${f.size}) via Cloudflare...`, 'highlight');
 
-      const uploadRes = await fetch(`${BASE_URL}/upload`, {
+      const uploadRes = await fetch(WORKER_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/pdf',
           'X-File-Name': f.name,
         },
-        body: f.rawFile, // Browser sends the File object directly as body
-        duplex: 'half',  // Required for streaming body in modern browsers
+        body: f.rawFile
       });
 
       if (!uploadRes.ok) {
@@ -1141,18 +1141,18 @@ async function startAnalysis() {
         throw new Error(err.error || `Upload failed: ${uploadRes.status}`);
       }
 
-      const { blobUrl } = await uploadRes.json();
-      if (!blobUrl) throw new Error('No blob URL returned');
+      const { fileId } = await uploadRes.json();
+      if (!fileId) throw new Error('No file ID returned from upload');
 
-      logLine(`// ✓ Stored — Claude reading all ${f.pages} pages...`, 'success');
+      logLine(`// ✓ Uploaded — Claude reading all ${f.pages} pages at once...`, 'success');
       logLine(`// Cross-referencing MEP + structural + architectural...`);
 
-      // ── Step 2: Analyze (server fetches blob → Anthropic → RFIs) ──
-      const analyzeRes = await fetch(`${BASE_URL}/analyze`, {
+      // ── Step 2: Analyze via Vercel (just the tiny file_id) ──
+      const analyzeRes = await fetch(ANALYZE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          blobUrl,
+          fileId,
           fileName: f.name,
           totalPages: f.pages,
           rfiMax,
@@ -1198,9 +1198,10 @@ async function startAnalysis() {
         confidence: 'high'
       }));
 
+    // ── Record upload ──
     if (STATE.userId) {
       try {
-        const cr = await fetch(`${BASE_URL}/analyze`, {
+        const cr = await fetch(ANALYZE_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ action: 'count_upload', userId: STATE.userId })
