@@ -1145,7 +1145,7 @@ async function startAnalysis() {
       if (!fileId) throw new Error('No file ID returned from upload');
 
       logLine(`// ✓ Uploaded — Claude reading all ${f.pages} pages at once...`, 'success');
-      logLine(`// Cross-referencing MEP + structural + architectural...`);
+      logLine(`// Reading all ${f.pages} pages — cross-referencing all sheets...`, 'highlight');
 
       // ── Step 2: Analyze via Vercel (just the tiny file_id) ──
       const analyzeRes = await fetch(ANALYZE_URL, {
@@ -1168,7 +1168,7 @@ async function startAnalysis() {
       const analyzeData = await analyzeRes.json();
       const resultText  = analyzeData.content?.[0]?.text || '';
       const rfis        = parseRFIArray(resultText);
-      logLine(`// ✓ ${rfis.length} RFI(s) found`, 'success');
+      logLine(`// ✓ ${rfis.length} verified RFI(s) ready`, 'success');
       allRFIs.push(...rfis);
     }
 
