@@ -42,131 +42,81 @@ export default async function handler(req, res) {
     if (!body.fileId) { res.status(400).json({ error: 'No fileId provided' }); return; }
     const { fileId, fileName, totalPages, rfiMax } = body;
 
-    const prompt = `You are a Senior Construction Project Manager with 20 years of field experience on commercial, institutional, and industrial projects. You have reviewed thousands of drawing sets and written hundreds of RFIs. You know the difference between a real problem that stops work and a theoretical concern that resolves itself.
+    const prompt = `You are a Senior Construction Project Manager with 20 years of field experience on commercial, institutional, and industrial projects. You have reviewed thousands of drawing sets and written hundreds of real RFIs.
 
-You are reviewing the complete drawing set: "${fileName}" (${totalPages} pages).
+You are reviewing: "${fileName}" (${totalPages} pages).
 
-YOUR JOB:
-Review these drawings the way you would before a pre-construction meeting. Find real RFIs — the kind you would actually send to the engineer of record because work cannot proceed or equipment cannot be ordered without resolution.
+PROCESS — follow these steps in order:
+Step 1: Read through every page of the drawing set.
+Step 2: Note any potential issues.
+Step 3: For each potential issue, go BACK and find the specific evidence — the exact sheet number, note number, equipment tag, schedule row, or dimension. If you cannot find it, discard it.
+Step 4: Only include issues that passed Step 3.
 
-You are looking for UP TO ${rfiMax} RFIs. If the drawings are well-coordinated, return fewer. If only 3 real issues exist, return 3. Never manufacture issues to fill a quota.
+This self-verification step is critical. Many apparent conflicts resolve when you look more carefully. A 20-year PM does not send an RFI without double-checking the drawings first.
 
-A REAL RFI meets all three of these:
-1. You can point to the exact sheet, note number, equipment tag, schedule row, or dimension where the problem exists
-2. A contractor would actually stop work or delay a procurement decision because of it
-3. It cannot be resolved by a reasonable field assumption or standard industry practice
+AN RFI IS REAL ONLY IF:
+- You can cite the exact sheet, note, tag, or schedule value where the problem exists
+- The information is genuinely missing or conflicting — not on another sheet you may have overlooked
+- A contractor would actually stop work or delay a procurement decision because of it
+- It cannot be resolved by a reasonable field assumption or standard practice
 
 DO NOT flag:
-- Issues you are inferring or assuming — only what you can see
-- Items that are normally resolved through shop drawing submittals
-- Generic coordination notes that are standard on every project
-- Anything you cannot cite with a specific sheet number and location
+- Issues where the information exists elsewhere in the set
+- Items normally resolved through shop drawing submittals  
+- Generic coordination that is standard on every project
+- Anything you cannot cite with a specific location
+
+You are looking for UP TO ${rfiMax} RFIs. If the drawings are well-coordinated, return fewer. If only 2 real issues exist, return 2. Never manufacture issues to fill a quota.
 
 PRIORITY:
-HIGH — blocks construction, life safety issue, underground/slab work required, equipment cannot be ordered
-MEDIUM — needs engineer response before that phase starts, doesn't block current work
-LOW — informational clarification, no schedule impact
+HIGH — blocks construction, life safety, underground/slab work, equipment cannot be ordered
+MEDIUM — needs resolution before that trade starts, doesn't block current work
+LOW — informational, no schedule impact
 
 RESPOND ONLY WITH A VALID JSON ARRAY — no preamble, no markdown:
-
 [
   {
     "title": "Specific issue — what sheet and where",
     "priority": "high|medium|low",
     "discipline": "Mechanical|Electrical|Architectural|Structural|Civil|Plumbing|Fire Protection|General",
-    "page_ref": "Sheet number(s) as printed on the drawing",
+    "page_ref": "Exact sheet number(s) as printed on the drawing",
     "location": "Specific room, grid line, or area",
-    "description": "What you see. Quote note text or tag values where visible. State the specific conflict and why it needs resolution before work proceeds.",
-    "spec_ref": "Keynote or spec section if visible",
+    "description": "What you see. Quote the exact note text, tag value, or schedule entry. State the specific conflict and why it needs resolution.",
+    "spec_ref": "Exact keynote or note number if visible",
     "cost_impact": "Low (<$5K)|Medium ($5K-$50K)|High (>$50K)",
     "schedule_impact": "None|Low (1-3 days)|Medium (1-2 weeks)|High (2+ weeks)"
   }
 ]`;
 
-    // ── Helper: call Claude with the stored file ──
-    async function callClaude(messages, maxTokens = 8000) {
-      const r = await fetch('https://api.anthropic.com/v1/messages', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-api-key': key,
-          'anthropic-version': '2023-06-01',
-          'anthropic-beta': 'files-api-2025-04-14',
-        },
-        body: JSON.stringify({
-          model: 'claude-sonnet-4-20250514',
-          max_tokens: maxTokens,
-          messages
-        })
-      });
-      const data = await r.json();
-      if (!r.ok) throw new Error(data?.error?.message || 'Claude API error ' + r.status);
-      return data.content?.[0]?.text || '';
-    }
+    const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': key,
+        'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'files-api-2025-04-14',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 8000,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'document', source: { type: 'file', file_id: fileId } },
+            { type: 'text', text: prompt }
+          ]
+        }]
+      })
+    });
 
-    function parseRFIs(text) {
-      try {
-        let clean = text.replace(/```json/gi,'').replace(/```/g,'').trim();
-        const match = clean.match(/\[[\s\S]*\]/);
-        if (!match) return [];
-        return JSON.parse(match[0].replace(/,\s*([}\]])/g,'$1')) || [];
-      } catch(e) { return []; }
-    }
-
-    // ── PASS 1: Generate candidate RFIs ──
-    console.log('Pass 1: Generating candidate RFIs...');
-    const pass1Text = await callClaude([{
-      role: 'user',
-      content: [
-        { type: 'document', source: { type: 'file', file_id: fileId } },
-        { type: 'text', text: prompt }
-      ]
-    }]);
-
-    const candidateRFIs = parseRFIs(pass1Text);
-    console.log(`Pass 1 complete: ${candidateRFIs.length} candidates`);
-
-    if (candidateRFIs.length === 0) {
-      res.status(200).json({ content: [{ type: 'text', text: '[]' }] });
+    const claudeData = await claudeRes.json();
+    if (!claudeRes.ok) {
+      console.error('Claude error:', JSON.stringify(claudeData));
+      res.status(claudeRes.status).json({ error: claudeData?.error?.message || 'Claude API error' });
       return;
     }
 
-    // ── PASS 2: Verify each candidate against the drawings ──
-    // Claude re-reads the same file and checks each RFI for evidence.
-    // RFIs that cannot be verified are removed.
-    const verifyPrompt = `You are a Senior Construction Project Manager with 20 years of experience. You have already reviewed a drawing set and generated the following candidate RFIs. Now you must verify each one by going back through the drawings carefully.
-
-For each candidate RFI, check:
-1. Does the specific sheet number cited actually exist in this drawing set?
-2. Is the conflict, missing item, or discrepancy actually visible in the drawings — not assumed or inferred?
-3. Would a contractor actually stop work or delay procurement because of this?
-4. Is the information truly missing — or is it on another sheet you may have overlooked?
-
-CANDIDATE RFIs TO VERIFY:
-${JSON.stringify(candidateRFIs, null, 2)}
-
-Return ONLY the RFIs that pass all four checks. Remove any that fail. If a schedule clearly shows the information that an RFI claims is missing, remove that RFI. If a plan clearly shows coordination that an RFI claims is absent, remove it.
-
-Return the verified RFIs in the same JSON format. Keep all original fields. If all RFIs are valid, return all of them. If none are valid, return [].
-
-RESPOND ONLY WITH A VALID JSON ARRAY — no preamble, no markdown.`;
-
-    console.log('Pass 2: Verifying candidates...');
-    const pass2Text = await callClaude([{
-      role: 'user',
-      content: [
-        { type: 'document', source: { type: 'file', file_id: fileId } },
-        { type: 'text', text: verifyPrompt }
-      ]
-    }], 6000);
-
-    const verifiedRFIs = parseRFIs(pass2Text);
-    console.log(`Pass 2 complete: ${verifiedRFIs.length} verified RFIs`);
-
-    // Return in same format as before so frontend works unchanged
-    res.status(200).json({
-      content: [{ type: 'text', text: JSON.stringify(verifiedRFIs) }]
-    });
+    res.status(200).json(claudeData);
 
   } catch(e) {
     console.error('Handler error:', e);
