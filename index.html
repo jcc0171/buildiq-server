@@ -1106,7 +1106,7 @@ async function startAnalysis() {
   const validFiles = STATE.files.filter(f => f.ok);
   const totalPages = validFiles.reduce((a,f) => a + f.pages, 0);
 
-  logLine('// PlanIQ Pro — Cloudflare Engine v17', 'highlight');
+  logLine('// PlanIQ Pro — Cloudflare Engine v18', 'highlight');
   logLine(`// ${validFiles.length} file(s) · ${totalPages} pages`);
   await delay(200);
 
@@ -1123,71 +1123,31 @@ async function startAnalysis() {
     const allRFIs = [];
 
     for (const f of validFiles) {
-      // ── Step 1: Upload PDF via Cloudflare Worker ──
-      // No size limits. Worker forwards to Anthropic Files API.
-      logLine(`// Uploading: ${f.name} (${f.size}) via Cloudflare...`, 'highlight');
+      logLine(`// Uploading + analysing: ${f.name} (${f.size}) via Cloudflare...`, 'highlight');
 
-      const uploadRes = await fetch(WORKER_URL, {
+      logLine(`// ✓ Uploaded — Claude reading all ${f.pages} pages...`, 'success');
+      logLine(`// Step 1 of 2: Cataloguing sheets, tags, schedules...`, 'highlight');
+
+      // ── Step 2: Worker runs full two-turn analysis (no Vercel timeout) ──
+      // Turn 1 (inventory) + Turn 2 (RFI analysis) happen inside the Worker.
+      // Cloudflare has no meaningful timeout — easily handles 30+ page sets.
+      const analyzeRes = await fetch(WORKER_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/pdf',
-          'X-File-Name': f.name,
+          'X-File-Name':    f.name,
+          'X-Total-Pages':  String(f.pages),
+          'X-RFI-Max':      String(rfiMax),
         },
         body: f.rawFile
-      });
-
-      if (!uploadRes.ok) {
-        const err = await uploadRes.json().catch(() => ({}));
-        throw new Error(err.error || `Upload failed: ${uploadRes.status}`);
-      }
-
-      const { fileId } = await uploadRes.json();
-      if (!fileId) throw new Error('No file ID returned from upload');
-
-      logLine(`// ✓ Uploaded — building drawing inventory...`, 'success');
-      logLine(`// Step 1 of 2: Reading all ${f.pages} pages — cataloguing sheets, tags, schedules...`, 'highlight');
-
-      // ── Step 2a: Inventory (Turn 1) — one Claude call, its own 60s window ──
-      const inventoryRes = await fetch(ANALYZE_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'inventory',
-          fileId,
-          fileName: f.name,
-          totalPages: f.pages,
-        })
-      });
-
-      if (!inventoryRes.ok) {
-        const err = await inventoryRes.json().catch(() => ({}));
-        throw new Error(err.error || `Inventory failed: ${inventoryRes.status}`);
-      }
-
-      const { inventoryText } = await inventoryRes.json();
-      if (!inventoryText) throw new Error('No inventory returned from server');
-
-      logLine(`// ✓ Inventory complete — cross-referencing for conflicts...`, 'success');
-      logLine(`// Step 2 of 2: Comparing schedules, tags, and notes for real conflicts...`, 'highlight');
-
-      // ── Step 2b: Analyze (Turn 2) — one Claude call, its own 60s window ──
-      const analyzeRes = await fetch(ANALYZE_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'analyze',
-          fileId,
-          fileName: f.name,
-          totalPages: f.pages,
-          rfiMax,
-          inventoryText,
-        })
       });
 
       if (!analyzeRes.ok) {
         const err = await analyzeRes.json().catch(() => ({}));
         throw new Error(err.error || `Analysis failed: ${analyzeRes.status}`);
       }
+
+      logLine(`// Step 2 of 2: Cross-referencing for real conflicts...`, 'highlight');
 
       const analyzeData = await analyzeRes.json();
       const resultText  = analyzeData.content?.[0]?.text || '';
