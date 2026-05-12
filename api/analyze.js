@@ -3,7 +3,7 @@ import { createClient } from '@supabase/supabase-js';
 export const config = {
   api: {
     bodyParser: {
-      sizeLimit: '1mb', // Only JSON now — no PDF bytes touch Vercel
+      sizeLimit: '4mb', // inventory JSON passed back in action=analyze can be a few KB
     },
   },
 };
@@ -23,7 +23,9 @@ export default async function handler(req, res) {
   try {
     const body = req.body || {};
 
-    // ── Count upload in Supabase ──
+    // ─────────────────────────────────────────────────────────────────
+    // ACTION: count_upload — Supabase quota tracking (unchanged)
+    // ─────────────────────────────────────────────────────────────────
     if (body.action === 'count_upload') {
       if (!body.userId) { res.status(400).json({ error: 'No userId' }); return; }
       const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_KEY);
@@ -38,18 +40,17 @@ export default async function handler(req, res) {
       return;
     }
 
-    // ── Analyze using file_id from Cloudflare Worker ──
-    if (!body.fileId) { res.status(400).json({ error: 'No fileId provided' }); return; }
-    const { fileId, fileName, totalPages, rfiMax } = body;
+    // ─────────────────────────────────────────────────────────────────
+    // ACTION: inventory — Turn 1 (one Claude call, ~20-40s)
+    // Claude reads the full drawing set and transcribes exactly what
+    // it sees: sheets, tags, schedules, notes, utility sources.
+    // No conclusions. Returns inventoryText to the browser.
+    // ─────────────────────────────────────────────────────────────────
+    if (body.action === 'inventory') {
+      const { fileId, fileName, totalPages } = body;
+      if (!fileId) { res.status(400).json({ error: 'No fileId' }); return; }
 
-    // ─────────────────────────────────────────────────────────────────
-    // TURN 1 — Inventory extraction
-    // Force Claude to document exactly what exists in the drawings
-    // before it is allowed to draw any conclusions. This makes it
-    // structurally impossible to reference tags or schedules it
-    // never actually saw.
-    // ─────────────────────────────────────────────────────────────────
-    const inventoryPrompt = `You are reviewing a construction drawing set: "${fileName}" (${totalPages} pages).
+      const inventoryPrompt = `You are reviewing a construction drawing set: "${fileName}" (${totalPages} pages).
 
 Your ONLY task right now is to produce a factual inventory of what is literally printed in these drawings. Do NOT identify problems yet. Do NOT draw conclusions yet.
 
@@ -60,7 +61,7 @@ Produce a JSON object with these keys:
     { "sheet_no": "exact sheet number as printed", "title": "exact sheet title as printed", "discipline": "M|E|A|S|C|P|FP" }
   ],
   "equipment_tags": [
-    { "tag": "exact tag as printed (e.g. AHU-1, P-2, EF-3)", "sheet_no": "sheet where found", "schedule_sheet": "sheet where its schedule row appears, or null" }
+    { "tag": "exact tag as printed (e.g. AHU-1, P-2, EF-3)", "sheet_no": "sheet where tag appears on a plan or detail", "schedule_sheet": "sheet where its schedule row appears, or null if no schedule row found" }
   ],
   "schedules_found": [
     { "sheet_no": "sheet number", "schedule_name": "exact schedule title", "columns": ["exact column headers as printed"], "row_count": 0 }
@@ -72,56 +73,101 @@ Produce a JSON object with these keys:
     { "sheet_no": "sheet number", "item": "what is dimensioned", "value": "exact value as printed" }
   ],
   "utility_sources": [
-    { "sheet_no": "sheet number", "item": "panel, disconnect, circuit, or utility connection", "value": "exact label or rating as printed" }
+    { "sheet_no": "sheet number", "item": "panel, disconnect, circuit, or utility connection label", "value": "exact label or rating as printed" }
   ]
 }
 
 Rules:
 - Copy values EXACTLY as they appear — do not paraphrase or interpret.
-- If a tag appears on multiple sheets, list it once and include all sheets in sheet_no (comma-separated).
+- If a tag appears on multiple sheets, list it once and include all sheet numbers in sheet_no (comma-separated).
 - If a section has nothing to report, return an empty array [].
-- Return ONLY the JSON object. No preamble. No markdown fences.`;
+- Return ONLY the JSON object. No preamble. No markdown fences. No commentary.`;
 
-    const turn1Res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'files-api-2025-04-14',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 6000,
-        messages: [{
-          role: 'user',
-          content: [
-            { type: 'document', source: { type: 'file', file_id: fileId } },
-            { type: 'text', text: inventoryPrompt }
-          ]
-        }]
-      })
-    });
+      const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': key,
+          'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'files-api-2025-04-14',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 6000,
+          messages: [{
+            role: 'user',
+            content: [
+              { type: 'document', source: { type: 'file', file_id: fileId } },
+              { type: 'text', text: inventoryPrompt }
+            ]
+          }]
+        })
+      });
 
-    const turn1Data = await turn1Res.json();
-    if (!turn1Res.ok) {
-      console.error('Turn 1 Claude error:', JSON.stringify(turn1Data));
-      res.status(turn1Res.status).json({ error: turn1Data?.error?.message || 'Claude API error (inventory)' });
+      const claudeData = await claudeRes.json();
+      if (!claudeRes.ok) {
+        console.error('Inventory Claude error:', JSON.stringify(claudeData));
+        res.status(claudeRes.status).json({ error: claudeData?.error?.message || 'Claude API error (inventory)' });
+        return;
+      }
+
+      const inventoryText = (claudeData.content || [])
+        .filter(b => b.type === 'text')
+        .map(b => b.text)
+        .join('');
+
+      // Return inventory text to browser — it passes it back in action=analyze
+      res.status(200).json({ inventoryText });
       return;
     }
 
-    const inventoryText = (turn1Data.content || [])
-      .filter(b => b.type === 'text')
-      .map(b => b.text)
-      .join('');
+    // ─────────────────────────────────────────────────────────────────
+    // ACTION: analyze — Turn 2 (one Claude call, ~20-40s)
+    // Browser passes the inventory from Turn 1 back here.
+    // Claude compares inventory entries against each other.
+    // Cannot reference any tag/value/sheet not in the inventory —
+    // making hallucination structurally much harder.
+    // ─────────────────────────────────────────────────────────────────
+    if (body.action === 'analyze') {
+      const { fileId, fileName, totalPages, rfiMax, inventoryText } = body;
+      if (!fileId)        { res.status(400).json({ error: 'No fileId' }); return; }
+      if (!inventoryText) { res.status(400).json({ error: 'No inventoryText' }); return; }
 
-    // ─────────────────────────────────────────────────────────────────
-    // TURN 2 — RFI analysis, grounded to the inventory
-    // Claude must cite from the inventory it just produced.
-    // It cannot reference any tag, sheet, or value that doesn't
-    // appear in the inventory above.
-    // ─────────────────────────────────────────────────────────────────
-    const rfiPrompt = `You are a Senior Construction Project Manager with 20 years of field experience on commercial, institutional, and industrial projects. You have reviewed thousands of drawing sets and written hundreds of real RFIs.
+      // Reconstruct Turn 1 prompt verbatim so the conversation is coherent
+      const turn1Prompt = `You are reviewing a construction drawing set: "${fileName}" (${totalPages} pages).
+
+Your ONLY task right now is to produce a factual inventory of what is literally printed in these drawings. Do NOT identify problems yet. Do NOT draw conclusions yet.
+
+Produce a JSON object with these keys:
+
+{
+  "sheet_list": [
+    { "sheet_no": "exact sheet number as printed", "title": "exact sheet title as printed", "discipline": "M|E|A|S|C|P|FP" }
+  ],
+  "equipment_tags": [
+    { "tag": "exact tag as printed (e.g. AHU-1, P-2, EF-3)", "sheet_no": "sheet where tag appears on a plan or detail", "schedule_sheet": "sheet where its schedule row appears, or null if no schedule row found" }
+  ],
+  "schedules_found": [
+    { "sheet_no": "sheet number", "schedule_name": "exact schedule title", "columns": ["exact column headers as printed"], "row_count": 0 }
+  ],
+  "keynotes_and_notes": [
+    { "sheet_no": "sheet number", "note_no": "note number or keynote number", "text": "exact text of the note" }
+  ],
+  "dimensions_and_clearances": [
+    { "sheet_no": "sheet number", "item": "what is dimensioned", "value": "exact value as printed" }
+  ],
+  "utility_sources": [
+    { "sheet_no": "sheet number", "item": "panel, disconnect, circuit, or utility connection label", "value": "exact label or rating as printed" }
+  ]
+}
+
+Rules:
+- Copy values EXACTLY as they appear — do not paraphrase or interpret.
+- If a tag appears on multiple sheets, list it once and include all sheet numbers in sheet_no (comma-separated).
+- If a section has nothing to report, return an empty array [].
+- Return ONLY the JSON object. No preamble. No markdown fences. No commentary.`;
+
+      const rfiPrompt = `You are a Senior Construction Project Manager with 20 years of field experience on commercial, institutional, and industrial projects. You have reviewed thousands of drawing sets and written hundreds of real RFIs.
 
 You are reviewing: "${fileName}" (${totalPages} pages).
 
@@ -134,26 +180,25 @@ ${inventoryText}
 Now find RFIs. You may ONLY reference items that appear in the inventory above. If a tag, sheet number, note, or value is not in the inventory, you cannot use it.
 
 WHAT MAKES AN RFI REAL:
-1. You can point to two specific inventory entries that conflict with each other — different values for the same item, or a required value that is absent.
+1. You can point to two specific inventory entries that conflict — different values for the same item on different sheets, or a required value that is missing entirely.
 2. A contractor would stop work or delay a procurement decision because of it.
 3. It cannot be resolved by a reasonable field assumption or standard practice.
 4. It is NOT something normally handled through shop drawing submittals.
 
 CROSS-CHECK APPROACH — look for these conflict types only:
-- Same equipment tag appears in a plan/schedule but its electrical characteristics differ between sheets (FLA, voltage, breaker size, HP)
-- An equipment tag in a mechanical/plumbing schedule has no corresponding electrical entry, or vice versa
-- A tag shown on a plan does not appear in any schedule you found
-- A utility source (panel, circuit) shown serving equipment doesn't match the scheduled load
+- Same equipment tag: electrical characteristics differ between the mechanical schedule and the electrical schedule (FLA, voltage, breaker size, HP, MCA)
+- Equipment tag appears on a plan but has no schedule row anywhere in the inventory (or vice versa)
+- A utility source (panel, circuit, disconnect) labeled on one sheet doesn't match the scheduled load on another
 - A note on one sheet directly contradicts a note or dimension on another sheet
-- A detail calls for something that conflicts with what the plan shows
-- A required schedule column has blank entries for specific rows only (not the whole schedule)
+- A detail or section calls for something that conflicts with what the plan or schedule shows
+- A required schedule column (e.g. electrical connection, circuit number) has blank entries for specific named rows only
 
 DO NOT flag:
-- Information that IS present in the inventory, even if you expected it somewhere else
-- Items where both sides of the conflict are not documented in the inventory
+- Information that IS present in the inventory, even if you expected it in a different location
+- Items where both sides of a claimed conflict are not documented in the inventory
 - Generic coordination issues with no specific conflicting values
-- Anything resolved by field measurement or standard practice
-- Whole schedules being "blank" — you listed them in the inventory with row counts
+- Anything normally resolved by field measurement or standard practice
+- Whole schedules being absent from the inventory — if it wasn't listed, you cannot assume it should exist
 
 You are looking for UP TO ${rfiMax} RFIs. If the drawings are well-coordinated, return fewer. If only 2 real issues exist, return 2. Never manufacture issues to fill a quota.
 
@@ -170,7 +215,7 @@ RESPOND ONLY WITH A VALID JSON ARRAY — no preamble, no markdown:
     "discipline": "Mechanical|Electrical|Architectural|Structural|Civil|Plumbing|Fire Protection|General",
     "page_ref": "Exact sheet number(s) as printed on the drawing",
     "location": "Specific room, grid line, or area",
-    "description": "State the two specific inventory facts that conflict. Quote the exact values from each. Explain why this needs engineer clarification.",
+    "description": "State the two specific inventory entries that conflict. Quote the exact values from each. Explain why this needs engineer clarification.",
     "spec_ref": "Exact keynote or note number if visible, or null",
     "cost_impact": "Low (<$5K)|Medium ($5K-$50K)|High (>$50K)",
     "schedule_impact": "None|Low (1-3 days)|Medium (1-2 weeks)|High (2+ weeks)"
@@ -179,47 +224,52 @@ RESPOND ONLY WITH A VALID JSON ARRAY — no preamble, no markdown:
 
 If zero real conflicts exist, return an empty array: []`;
 
-    const turn2Res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': key,
-        'anthropic-version': '2023-06-01',
-        'anthropic-beta': 'files-api-2025-04-14',
-      },
-      body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
-        max_tokens: 8000,
-        messages: [
-          // Full conversation history so Claude has both the document and its own inventory
-          {
-            role: 'user',
-            content: [
-              { type: 'document', source: { type: 'file', file_id: fileId } },
-              { type: 'text', text: inventoryPrompt }
-            ]
-          },
-          {
-            role: 'assistant',
-            content: inventoryText
-          },
-          {
-            role: 'user',
-            content: [{ type: 'text', text: rfiPrompt }]
-          }
-        ]
-      })
-    });
+      const claudeRes = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-api-key': key,
+          'anthropic-version': '2023-06-01',
+          'anthropic-beta': 'files-api-2025-04-14',
+        },
+        body: JSON.stringify({
+          model: 'claude-sonnet-4-20250514',
+          max_tokens: 8000,
+          messages: [
+            // Full conversation: document + Turn 1 prompt + inventory response + Turn 2 prompt
+            {
+              role: 'user',
+              content: [
+                { type: 'document', source: { type: 'file', file_id: fileId } },
+                { type: 'text', text: turn1Prompt }
+              ]
+            },
+            {
+              role: 'assistant',
+              content: inventoryText
+            },
+            {
+              role: 'user',
+              content: [{ type: 'text', text: rfiPrompt }]
+            }
+          ]
+        })
+      });
 
-    const turn2Data = await turn2Res.json();
-    if (!turn2Res.ok) {
-      console.error('Turn 2 Claude error:', JSON.stringify(turn2Data));
-      res.status(turn2Res.status).json({ error: turn2Data?.error?.message || 'Claude API error (RFI analysis)' });
+      const claudeData = await claudeRes.json();
+      if (!claudeRes.ok) {
+        console.error('Analyze Claude error:', JSON.stringify(claudeData));
+        res.status(claudeRes.status).json({ error: claudeData?.error?.message || 'Claude API error (analyze)' });
+        return;
+      }
+
+      // Return in same shape the frontend already parses
+      res.status(200).json(claudeData);
       return;
     }
 
-    // Return the RFI response in the same shape the frontend already expects
-    res.status(200).json(turn2Data);
+    // Unknown action
+    res.status(400).json({ error: 'Unknown action' });
 
   } catch(e) {
     console.error('Handler error:', e);
