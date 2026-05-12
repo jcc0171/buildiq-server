@@ -1144,19 +1144,43 @@ async function startAnalysis() {
       const { fileId } = await uploadRes.json();
       if (!fileId) throw new Error('No file ID returned from upload');
 
-      logLine(`// ✓ Uploaded — Claude reading all ${f.pages} pages at once...`, 'success');
-      logLine(`// Reading all ${f.pages} pages — cross-referencing all sheets...`, 'highlight');
+      logLine(`// ✓ Uploaded — building drawing inventory...`, 'success');
+      logLine(`// Step 1 of 2: Reading all ${f.pages} pages — cataloguing sheets, tags, schedules...`, 'highlight');
 
-      // ── Step 2: Analyze via Vercel (just the tiny file_id) ──
+      // ── Step 2a: Inventory (Turn 1) — one Claude call, its own 60s window ──
+      const inventoryRes = await fetch(ANALYZE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'inventory',
+          fileId,
+          fileName: f.name,
+          totalPages: f.pages,
+        })
+      });
+
+      if (!inventoryRes.ok) {
+        const err = await inventoryRes.json().catch(() => ({}));
+        throw new Error(err.error || `Inventory failed: ${inventoryRes.status}`);
+      }
+
+      const { inventoryText } = await inventoryRes.json();
+      if (!inventoryText) throw new Error('No inventory returned from server');
+
+      logLine(`// ✓ Inventory complete — cross-referencing for conflicts...`, 'success');
+      logLine(`// Step 2 of 2: Comparing schedules, tags, and notes for real conflicts...`, 'highlight');
+
+      // ── Step 2b: Analyze (Turn 2) — one Claude call, its own 60s window ──
       const analyzeRes = await fetch(ANALYZE_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          action: 'analyze',
           fileId,
           fileName: f.name,
           totalPages: f.pages,
           rfiMax,
-          userId: STATE.userId
+          inventoryText,
         })
       });
 
