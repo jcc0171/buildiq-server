@@ -97,7 +97,7 @@ RESPOND ONLY WITH A VALID JSON ARRAY — no preamble, no markdown:
         'anthropic-beta': 'files-api-2025-04-14',
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model: 'claude-sonnet-4-6',
         max_tokens: 8000,
         messages: [{
           role: 'user',
