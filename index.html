@@ -1106,7 +1106,7 @@ async function startAnalysis() {
   const validFiles = STATE.files.filter(f => f.ok);
   const totalPages = validFiles.reduce((a,f) => a + f.pages, 0);
 
-  logLine('// PlanIQ Pro — Cloudflare Engine v18', 'highlight');
+  logLine('// PlanIQ Pro — Cloudflare Engine v17', 'highlight');
   logLine(`// ${validFiles.length} file(s) · ${totalPages} pages`);
   await delay(200);
 
@@ -1123,31 +1123,47 @@ async function startAnalysis() {
     const allRFIs = [];
 
     for (const f of validFiles) {
-      logLine(`// Uploading + analysing: ${f.name} (${f.size}) via Cloudflare...`, 'highlight');
+      // ── Step 1: Upload PDF via Cloudflare Worker ──
+      // No size limits. Worker forwards to Anthropic Files API and returns file_id.
+      logLine(`// Uploading: ${f.name} (${f.size}) via Cloudflare...`, 'highlight');
 
-      logLine(`// ✓ Uploaded — Claude reading all ${f.pages} pages...`, 'success');
-      logLine(`// Step 1 of 2: Cataloguing sheets, tags, schedules...`, 'highlight');
-
-      // ── Step 2: Worker runs full two-turn analysis (no Vercel timeout) ──
-      // Turn 1 (inventory) + Turn 2 (RFI analysis) happen inside the Worker.
-      // Cloudflare has no meaningful timeout — easily handles 30+ page sets.
-      const analyzeRes = await fetch(WORKER_URL, {
+      const uploadRes = await fetch(WORKER_URL, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/pdf',
-          'X-File-Name':    f.name,
-          'X-Total-Pages':  String(f.pages),
-          'X-RFI-Max':      String(rfiMax),
+          'X-File-Name': f.name,
         },
         body: f.rawFile
+      });
+
+      if (!uploadRes.ok) {
+        const err = await uploadRes.json().catch(() => ({}));
+        throw new Error(err.error || `Upload failed: ${uploadRes.status}`);
+      }
+
+      const { fileId } = await uploadRes.json();
+      if (!fileId) throw new Error('No file ID returned from upload');
+
+      logLine(`// ✓ Uploaded — Claude reading all ${f.pages} pages at once...`, 'success');
+      logLine(`// Reading all ${f.pages} pages — cross-referencing all sheets...`, 'highlight');
+
+      // ── Step 2: Analyze via Vercel (just the tiny file_id) ──
+      const analyzeRes = await fetch(ANALYZE_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fileId,
+          fileName: f.name,
+          totalPages: f.pages,
+          rfiMax,
+          userId: STATE.userId
+        })
       });
 
       if (!analyzeRes.ok) {
         const err = await analyzeRes.json().catch(() => ({}));
         throw new Error(err.error || `Analysis failed: ${analyzeRes.status}`);
       }
-
-      logLine(`// Step 2 of 2: Cross-referencing for real conflicts...`, 'highlight');
 
       const analyzeData = await analyzeRes.json();
       const resultText  = analyzeData.content?.[0]?.text || '';
