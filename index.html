@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Crowne Concrete | Driveways, Patios, Foundations &amp; Decorative Concrete</title>
-<meta name="description" content="Crowne Concrete — residential and commercial concrete contractor. Driveways, patios, sidewalks, foundations, stamped concrete and repair. Free estimates.">
+<meta name="description" content="Crowne Concrete — residential and commercial concrete contractor. Serving Greater Central Florida. Driveways, patios, sidewalks, foundations, stamped concrete, CMU block masonry and repair. Free estimates.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500;600;700&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
@@ -90,6 +90,11 @@
   .card:hover .num{color:var(--gold)}
   .num{font-family:Oswald,sans-serif;font-size:14px;letter-spacing:.2em;color:var(--stone);margin-bottom:18px;transition:color .2s}
   .card h3{font-size:26px;margin-bottom:12px}
+  .card-wide{grid-column:1/-1;background:var(--ink);color:var(--white);border-left:6px solid var(--gold)}
+  .card-wide:hover{background:var(--ink-2)}
+  .card-wide .num{color:var(--gold)}
+  .card-wide h3{font-size:34px}
+  .card-wide p{color:#cfccc6;max-width:820px;font-size:17px}
   .card p{color:#55534f;font-size:16px}
 
   /* why */
@@ -163,10 +168,10 @@
     <div class="wrap">
       <div class="eyebrow">Residential &amp; Commercial Concrete</div>
       <h1>Concrete work <span>built to last.</span></h1>
-      <p class="lead">Driveways, patios, foundations, and decorative finishes, poured right the first time. Crowne Concrete shows up on schedule, keeps a clean job site, and stands behind every slab.</p>
+      <p class="lead">Driveways, patios, foundations, decorative finishes, and CMU block walls, built right the first time. Crowne Concrete shows up on schedule, keeps a clean job site, and stands behind every slab.</p>
       <div class="hero-ctas">
         <a href="#contact" class="btn">Get a Free Estimate</a>
-        <a href="tel:+15555555555" class="btn btn-ghost">Call (555) 555-5555</a>
+        <a href="tel:+17069821917" class="btn btn-ghost">Call (706) 982-1917</a>
       </div>
       <div class="hero-stats">
         <div class="stat"><b>Licensed</b><span>&amp; Fully Insured</span></div>
@@ -181,7 +186,7 @@
       <div class="section-head">
         <div class="eyebrow">What We Pour</div>
         <h2>Our Services</h2>
-        <p>From a new driveway to a full commercial flatwork job, we handle the excavation, forming, reinforcement, pour, and finish.</p>
+        <p>From a new driveway to block walls and full commercial jobs, we handle the excavation, forming, reinforcement, pour, finish, and masonry.</p>
       </div>
       <div class="grid">
         <div class="card"><div class="num">01</div><h3>Driveways</h3><p>New installs and full tear-out replacements, properly graded and reinforced to handle years of traffic.</p></div>
@@ -190,6 +195,7 @@
         <div class="card"><div class="num">04</div><h3>Foundations &amp; Slabs</h3><p>Footings, garage slabs, shop floors, and slab-on-grade foundations built to spec.</p></div>
         <div class="card"><div class="num">05</div><h3>Commercial Flatwork</h3><p>Parking areas, curbs, ADA ramps, and sidewalks for businesses and general contractors.</p></div>
         <div class="card"><div class="num">06</div><h3>Repair &amp; Replacement</h3><p>Cracked, sunken, or failing concrete removed and replaced, with drainage fixed so it doesn't happen again.</p></div>
+        <div class="card card-wide"><div class="num">07 · We Also Go Vertical</div><h3>CMU Block Masonry</h3><p>Our own CMU block masons build structural walls, stem walls, retaining walls, and block buildings, with grouted and reinforced cells, bond beams, and lintels. One crew handles both your flatwork and your walls, so you only need one contractor and one schedule.</p></div>
       </div>
     </div>
   </section>
@@ -199,7 +205,7 @@
       <div>
         <div class="section-head" style="margin-bottom:36px">
           <div class="eyebrow">Why Crowne</div>
-          <h2>The crown standard on every pour</h2>
+          <h2>The Crowne standard on every pour</h2>
           <p>Concrete is permanent, so the prep work matters more than anything else. We don't cut corners where you can't see them.</p>
         </div>
         <ul class="checks">
@@ -237,11 +243,11 @@
         <div class="eyebrow">Get In Touch</div>
         <h2 style="font-size:clamp(36px,5vw,56px);margin-bottom:28px">Let's talk about your project</h2>
         <div class="label">Call or Text</div>
-        <a class="big" href="tel:+15555555555">(555) 555-5555</a>
+        <a class="big" href="tel:+17069821917">(706) 982-1917</a>
         <div class="label">Email</div>
         <a class="big" style="font-size:clamp(22px,2.6vw,28px)" href="mailto:info@crowneconcrete.com">info@crowneconcrete.com</a>
         <div class="label">Service Area</div>
-        <p style="margin-top:6px">Proudly serving [Your City] and surrounding areas.</p>
+        <p style="margin-top:6px">Proudly serving Greater Central Florida.</p>
       </div>
 
       <!-- To receive form submissions by email, create a free form at formspree.io and replace YOUR_FORM_ID below -->
@@ -256,7 +262,7 @@
           <div><label for="type">Project Type</label>
             <select id="type" name="project_type">
               <option>Driveway</option><option>Patio / Walkway</option><option>Stamped / Decorative</option>
-              <option>Foundation / Slab</option><option>Commercial</option><option>Repair / Replacement</option><option>Other</option>
+              <option>Foundation / Slab</option><option>CMU Block / Masonry Walls</option><option>Commercial</option><option>Repair / Replacement</option><option>Other</option>
             </select></div>
           <div><label for="zip">Job Zip Code</label><input id="zip" name="zip" inputmode="numeric" autocomplete="postal-code"></div>
         </div>
