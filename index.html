@@ -143,6 +143,9 @@
   textarea{min-height:120px;resize:vertical}
   form .btn{width:100%;font-size:18px;padding:16px}
   .form-note{font-size:13px;color:var(--stone);text-align:center}
+  .form-note.ok{color:#1d7a3a;font-size:16px;font-weight:600}
+  .form-note.err{color:#b3261e;font-size:15px;font-weight:600}
+  form .btn[disabled]{opacity:.6;cursor:wait}
 
   footer{background:#00121f;color:#8396a8;padding:34px 0;font-size:14px}
   footer .wrap{display:flex;justify-content:space-between;gap:20px;flex-wrap:wrap;align-items:center}
@@ -251,13 +254,19 @@
         <div class="label">Call or Text</div>
         <a class="big" href="tel:+17069821917">(706) 982-1917</a>
         <div class="label">Email</div>
-        <a class="big" style="font-size:clamp(22px,2.6vw,28px)" href="mailto:info@crowneconcrete.com">info@crowneconcrete.com</a>
+        <a class="big" style="font-size:clamp(22px,2.6vw,28px)" href="mailto:joe@crowneconcrete.com">joe@crowneconcrete.com</a>
         <div class="label">Service Area</div>
         <p style="margin-top:6px">Proudly serving Greater Central Florida.</p>
       </div>
 
-      <!-- To receive form submissions by email, create a free form at formspree.io and replace YOUR_FORM_ID below -->
-      <form action="https://formspree.io/f/YOUR_FORM_ID" method="POST">
+      <!-- Estimate requests are emailed to joe@crowneconcrete.com through FormSubmit (formsubmit.co).
+           After the first test, FormSubmit emails you a private alias. You can swap it in for the email address in the two places below to hide your address from spammers. -->
+      <form id="estimate-form" action="https://formsubmit.co/joe@crowneconcrete.com" method="POST" data-ajax="https://formsubmit.co/ajax/joe@crowneconcrete.com">
+        <input type="hidden" name="_subject" value="New estimate request from CrowneConcrete.com">
+        <input type="hidden" name="_template" value="table">
+        <input type="hidden" name="_captcha" value="false">
+        <input type="hidden" name="_next" value="https://www.crowneconcrete.com/#thanks">
+        <input type="text" name="_honey" style="display:none" tabindex="-1" autocomplete="off">
         <h3>Request a Free Estimate</h3>
         <div class="row">
           <div><label for="name">Name</label><input id="name" name="name" required autocomplete="name"></div>
@@ -274,7 +283,7 @@
         </div>
         <div><label for="msg">Project Details</label><textarea id="msg" name="message" placeholder="Approximate size, timeline, anything we should know"></textarea></div>
         <button type="submit" class="btn">Send Request</button>
-        <p class="form-note">We usually respond within one business day.</p>
+        <p class="form-note" id="form-status" role="status">We usually respond within one business day.</p>
       </form>
     </div>
   </section>
@@ -288,5 +297,28 @@
   </div>
 </footer>
 <script>document.getElementById('yr').textContent=new Date().getFullYear();</script>
+<script>
+(function(){
+  var f=document.getElementById('estimate-form'); if(!f) return;
+  var s=document.getElementById('form-status'), b=f.querySelector('button[type=submit]');
+  if(location.hash==='#thanks'){s.textContent='Thanks! Your request was sent. We\'ll be in touch within one business day.';s.className='form-note ok';}
+  f.addEventListener('submit',function(e){
+    if(!window.fetch) return;
+    e.preventDefault();
+    b.disabled=true; b.textContent='Sending...';
+    fetch(f.dataset.ajax,{method:'POST',headers:{'Accept':'application/json'},body:new FormData(f)})
+      .then(function(r){return r.json().then(function(j){return {ok:r.ok,j:j};});})
+      .then(function(res){
+        if(res.ok && String(res.j.success)!=='false'){
+          f.reset(); s.textContent='Thanks! Your request was sent. We\'ll be in touch within one business day.'; s.className='form-note ok';
+        } else { throw new Error(res.j.message||'error'); }
+      })
+      .catch(function(){
+        s.innerHTML='Sorry, that didn\'t go through. Please call or text <a href="tel:+17069821917">(706) 982-1917</a>.'; s.className='form-note err';
+      })
+      .finally(function(){ b.disabled=false; b.textContent='Send Request'; });
+  });
+})();
+</script>
 </body>
 </html>
